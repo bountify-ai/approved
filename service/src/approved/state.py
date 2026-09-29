@@ -1,0 +1,226 @@
+"""The judge's persisted state: follow cursor, per-action ledger, decisions, chain break.
+
+This file is a cache of what the judge has already done. It is never the truth about the
+approval log (that is the log), and nothing in it is ever written back to the log.
+
+Durability rules:
+
+* **Atomic replacement.** Every save writes a sibling temp file, fsyncs it, ``os.replace``-s
+  it over the old file and fsyncs the directory. A crash leaves either the old state or the
+  new one, never half of each.
+* **At most once per action_key.** The worker claims an action_key (and saves) *before* the
+  reviewer runs, so a crash mid-review leaves the key claimed and a restart does not judge it
+  again. The judge fails toward silence, never toward a duplicate message.
+* **Fail closed on a bad file.** A state file that exists but does not parse refuses to load.
+  Starting over from an empty ledger would re-judge requests already judged.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+__all__ = [
+    "HASH_PATTERN",
+    "MAX_LEDGER_ENTRIES",
+    "ChainBreak",
+    "Cursor",
+    "DecisionRecord",
+    "JudgeState",
+    "JudgedEntry",
+    "StateError",
+    "StateStore",
+]
+
+HASH_PATTERN = r"^[0-9a-f]{64}$"
+
+#: Ledger entries kept per map. The follow cursor only moves forward and stale requests are
+#: never judged, so an evicted key cannot come back to be judged twice.
+MAX_LEDGER_ENTRIES = 10_000
+
+STATE_FILENAME = "judge-state.json"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class StateError(RuntimeError):
+    """The state file cannot be trusted; the worker refuses to start."""
+
+
+class _Model(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Cursor(_Model):
+    """Exclusive follow cursor: consumed through ``seq``, whose record hash is ``hash``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    seq: Annotated[int, Field(ge=0)] = 0
+    hash: Annotated[str, Field(pattern=HASH_PATTERN)] | None = None
+
+
+JudgedStatus = Literal["claimed", "notified", "silent", "absent", "skipped"]
+
+
+class JudgedEntry(_Model):
+    """What the judge did with one ``approval.requested``.
+
+    ``claimed``: reviewer started (a crash here stays claimed and is never re-judged).
+    ``notified``: verdict produced and the advisory message delivered.
+    ``silent``: verdict produced, message not delivered (Telegram off or failed).
+    ``absent``: no verdict (timeout, parse error, inference error, open circuit).
+    ``skipped``: not judged on purpose (already decided, or older than JUDGE_MAX_AGE_S).
+    """
+
+    status: JudgedStatus
+    seq: int
+    at: datetime = Field(default_factory=_now)
+    decision: str | None = None
+    reason: str | None = None
+    call_id: str | None = None
+    trace_url: str | None = None
+
+
+class DecisionRecord(_Model):
+    """The human's (or the TTL sweep's) terminal answer, awaiting Weave feedback (unit 2)."""
+
+    event: str
+    actor: str
+    seq: int
+    ts: str
+    feedback: Literal["pending", "sent", "failed", "not-applicable"] = "pending"
+
+
+class ChainBreak(_Model):
+    reason: str
+    at_seq: int
+    detected_at: datetime = Field(default_factory=_now)
+
+
+class JudgeState(_Model):
+    version: Literal[1] = 1
+    facade_url: str | None = None
+    cursor: Cursor = Field(default_factory=Cursor)
+    judged: dict[str, JudgedEntry] = Field(default_factory=dict)
+    decisions: dict[str, DecisionRecord] = Field(default_factory=dict)
+    chain_break: ChainBreak | None = None
+
+
+def _trim(mapping: dict[str, object], limit: int) -> None:
+    """Drop the oldest entries (insertion order) beyond ``limit``."""
+    excess = len(mapping) - limit
+    if excess > 0:
+        for key in list(mapping)[:excess]:
+            del mapping[key]
+
+
+class StateStore:
+    """Load and atomically persist :class:`JudgeState` under ``state_dir``."""
+
+    def __init__(self, state_dir: Path, facade_url: str, *, max_entries: int = MAX_LEDGER_ENTRIES):
+        self.dir = Path(state_dir)
+        self.path = self.dir / STATE_FILENAME
+        self.max_entries = max_entries
+        self.state = self._load(facade_url)
+
+    def _load(self, facade_url: str) -> JudgeState:
+        if not self.path.exists():
+            return JudgeState(facade_url=facade_url)
+        try:
+            state = JudgeState.model_validate_json(self.path.read_bytes())
+        except (OSError, ValidationError, ValueError) as exc:
+            raise StateError(
+                f"{self.path} exists but cannot be read as judge state ({type(exc).__name__}); "
+                "refusing to start rather than re-judge requests already judged"
+            ) from None
+        if state.facade_url is not None and state.facade_url != facade_url:
+            raise StateError(
+                f"{self.path} belongs to a different facade; its cursor and ledger describe "
+                "another log. Point STATE_DIR at a fresh directory for this facade."
+            )
+        if state.facade_url is None:
+            state.facade_url = facade_url
+        return state
+
+    # ----------------------------------------------------------------- mutations
+
+    def is_known(self, action_key: str) -> bool:
+        return action_key in self.state.judged
+
+    def claim(self, action_key: str, seq: int) -> bool:
+        """Mark ``action_key`` as being judged and persist. False if already known."""
+        if action_key in self.state.judged:
+            return False
+        self.state.judged[action_key] = JudgedEntry(status="claimed", seq=seq)
+        self.save()
+        return True
+
+    def settle(self, action_key: str, entry: JudgedEntry) -> None:
+        self.state.judged[action_key] = entry
+        self.save()
+
+    def record_decision(self, action_key: str, decision: DecisionRecord) -> bool:
+        """Remember a terminal decision once. False if this action_key already has one."""
+        if action_key in self.state.decisions:
+            return False
+        if action_key not in self.state.judged:
+            decision = decision.model_copy(update={"feedback": "not-applicable"})
+        self.state.decisions[action_key] = decision
+        return True
+
+    def advance(self, cursor: Cursor) -> None:
+        self.state.cursor = cursor
+        self.save()
+
+    def mark_chain_break(self, reason: str, at_seq: int) -> ChainBreak:
+        brk = ChainBreak(reason=reason, at_seq=at_seq)
+        self.state.chain_break = brk
+        self.save()
+        return brk
+
+    # --------------------------------------------------------------- persistence
+
+    def save(self) -> None:
+        _trim(self.state.judged, self.max_entries)  # type: ignore[arg-type]
+        _trim(self.state.decisions, self.max_entries)  # type: ignore[arg-type]
+        self.dir.mkdir(parents=True, exist_ok=True)
+        data = self.state.model_dump_json(indent=1).encode("utf-8")
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{STATE_FILENAME}.", suffix=".tmp", dir=self.dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, self.path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
+        _fsync_dir(self.dir)
+
+    def snapshot(self) -> dict[str, object]:
+        return json.loads(self.state.model_dump_json())
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Make the rename durable. Not every platform can open a directory; that is not fatal."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)

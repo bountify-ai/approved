@@ -1,0 +1,393 @@
+{
+  "http_status": 200,
+  "body": {
+    "records": [
+      {
+        "actor": "human:fixture",
+        "alg": "sha256/jcs",
+        "event": "policy.updated",
+        "hash": "891b57c364b00f0a1252d2d875cca36a904d14d8665540884445d31e9c3b71e6",
+        "payload": {
+          "payload_hash": "2695c0da3f65393c4ba71bbb07b1be240d6dc30e04dbfebb84ad09b73e2f4f4a",
+          "policy_path": "APPROVAL.md",
+          "sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737"
+        },
+        "prev": null,
+        "seq": 1,
+        "ts": "2026-09-25T08:26:27.372Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "9299765f7cb24fb525cbc4ae502ef78f1a827f0196459c48e10efa57b3f75a1e",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9:vcs.push.main",
+              "payload_hash": "a736dada7e1254980952d31673ab1c0bd61bd6fd63a56514f9d5a577e5b92c85",
+              "summary": "git push origin main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "891b57c364b00f0a1252d2d875cca36a904d14d8665540884445d31e9c3b71e6",
+        "seq": 2,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9",
+        "ts": "2026-09-25T08:26:27.697Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "c98d660e393a1ecf7954106a5f14aa93a1f1303627f169898e9f3fc4bb38787e",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "3b73af3a39c5880944bd851e6fbdcb6afc8a5f486eb4a6bc25d55f7fb3debaf6",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "a736dada7e1254980952d31673ab1c0bd61bd6fd63a56514f9d5a577e5b92c85",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push origin main"
+        },
+        "prev": "9299765f7cb24fb525cbc4ae502ef78f1a827f0196459c48e10efa57b3f75a1e",
+        "seq": 3,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9",
+        "ts": "2026-09-25T08:26:27.763Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "95f1453fe4860158e599ff0da7d76709600100ab74ed8a27f3721aecea9ad5a8",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95:vcs.push.main",
+              "payload_hash": "c5385aacf0311c1a1fd57273855589558d4b7e7f9c1b8ef9bf9e3845a29d47dc",
+              "summary": "git push origin main --no-verify"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "c98d660e393a1ecf7954106a5f14aa93a1f1303627f169898e9f3fc4bb38787e",
+        "seq": 4,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95",
+        "ts": "2026-09-25T08:26:29.021Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "6be716a96af33ab310e2687bd574d25f5300700e5477747c7d99a6f49b587995",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "c34ae9c2961a0d081c9cf4467a0aa135f6570e7f148d2fd8b7e0ec0039fb2b74",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "c5385aacf0311c1a1fd57273855589558d4b7e7f9c1b8ef9bf9e3845a29d47dc",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push origin main --no-verify"
+        },
+        "prev": "95f1453fe4860158e599ff0da7d76709600100ab74ed8a27f3721aecea9ad5a8",
+        "seq": 5,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95",
+        "ts": "2026-09-25T08:26:29.023Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "218e42a3efd8fa195c50893bcd551aff556d90281e9572ab746a6c9e4226f66b",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f:vcs.push.main",
+              "payload_hash": "6de983652a44a4ea7c72714d2aa297e20a25de77bf5adce3359edf3081a2a8f2",
+              "summary": "git push -u origin main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "6be716a96af33ab310e2687bd574d25f5300700e5477747c7d99a6f49b587995",
+        "seq": 6,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f",
+        "ts": "2026-09-25T08:26:30.061Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "cbd9be604e02034dfb9ec0880a83fbe73621207cb3de0643d5efec58d71b8724",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "a7cb66eedd83647c8d042ef4c46a8344f6e1bd8ffe47730449a2b8ef4e2561e8",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "6de983652a44a4ea7c72714d2aa297e20a25de77bf5adce3359edf3081a2a8f2",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push -u origin main"
+        },
+        "prev": "218e42a3efd8fa195c50893bcd551aff556d90281e9572ab746a6c9e4226f66b",
+        "seq": 7,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f",
+        "ts": "2026-09-25T08:26:30.062Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "d919c6f0e23e871412bc50cf74e60eec9ad38f92c71c8f23d558aa80f390ce40",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975:vcs.push.main",
+              "payload_hash": "d747b8339636835a345cda7cc9eb27a8610ffe4667afe019a04085f09fd1342b",
+              "summary": "git push origin HEAD:main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "cbd9be604e02034dfb9ec0880a83fbe73621207cb3de0643d5efec58d71b8724",
+        "seq": 8,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975",
+        "ts": "2026-09-25T08:26:31.098Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "9d803abea84b0aee13040c1db85ccd266e56e8ea455efbb1d16f0a574b509b16",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "01158c7b6b2165d67a1388eff456ca8922edd0d5ab777b2fb46973b50b763a64",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "d747b8339636835a345cda7cc9eb27a8610ffe4667afe019a04085f09fd1342b",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push origin HEAD:main"
+        },
+        "prev": "d919c6f0e23e871412bc50cf74e60eec9ad38f92c71c8f23d558aa80f390ce40",
+        "seq": 9,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975",
+        "ts": "2026-09-25T08:26:31.100Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "6c5cb1dec1c891c4a41ae62c787c109fb3418fc5ef6c81dc7d211d313052e6e0",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd:vcs.push.main",
+              "payload_hash": "93c7bffccece0ee7cc4f1cd8b1948cd80816408f8129d145e9ed17b5b2333816",
+              "summary": "git push origin main:main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "9d803abea84b0aee13040c1db85ccd266e56e8ea455efbb1d16f0a574b509b16",
+        "seq": 10,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd",
+        "ts": "2026-09-25T08:26:32.144Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "5f4d95963f0f3f0b44447f52920b63c7c1d5c87e14c601f2d1874f609b39ef9f",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "0d384fc4a1098d36738d007c893916ebbb5535cf4e27a31ca784e68877248efe",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "93c7bffccece0ee7cc4f1cd8b1948cd80816408f8129d145e9ed17b5b2333816",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push origin main:main"
+        },
+        "prev": "6c5cb1dec1c891c4a41ae62c787c109fb3418fc5ef6c81dc7d211d313052e6e0",
+        "seq": 11,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd",
+        "ts": "2026-09-25T08:26:32.153Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "1728ceb466bb3fbf003475de05c866a4e4509d013fbb6c05998570e397072f46",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95:vcs.push.main",
+              "payload_hash": "f72fc9f438ecfae43a8b6b7b4440c187d21d8d3eec3ff3c606f5580ced66eb8d",
+              "summary": "git push --verbose origin main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "5f4d95963f0f3f0b44447f52920b63c7c1d5c87e14c601f2d1874f609b39ef9f",
+        "seq": 12,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95",
+        "ts": "2026-09-25T08:26:33.195Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "8120a0a52e59b59ddc57cec8b5fd7a62c4c27e409630fd77e6d591a9e592f4a3",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "36dd59ac2772a0b6d3011ff7a513bce4131f4664a7e734d15ac47cf07e77d228",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "f72fc9f438ecfae43a8b6b7b4440c187d21d8d3eec3ff3c606f5580ced66eb8d",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push --verbose origin main"
+        },
+        "prev": "1728ceb466bb3fbf003475de05c866a4e4509d013fbb6c05998570e397072f46",
+        "seq": 13,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95",
+        "ts": "2026-09-25T08:26:33.196Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "ed3a98df56bfcc9d709e2edbb6b263d83ab46570060b957111f69b4c6d2dead0",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:27.763Z",
+          "ttl_ms": 5000
+        },
+        "prev": "8120a0a52e59b59ddc57cec8b5fd7a62c4c27e409630fd77e6d591a9e592f4a3",
+        "seq": 14,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9",
+        "ts": "2026-09-25T08:26:33.471Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "d4d329700eb817c01c74704adabda4b4b616b646174e4146eceec2ced8753bf3",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:29.023Z",
+          "ttl_ms": 5000
+        },
+        "prev": "ed3a98df56bfcc9d709e2edbb6b263d83ab46570060b957111f69b4c6d2dead0",
+        "seq": 15,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst1:52909f3e7a4f0c95",
+        "ts": "2026-09-25T08:26:56.622Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "04880287faa393fc13d5d81a433c39cc5289d8434e2cd85220ad17b59f89a489",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:30.062Z",
+          "ttl_ms": 5000
+        },
+        "prev": "d4d329700eb817c01c74704adabda4b4b616b646174e4146eceec2ced8753bf3",
+        "seq": 16,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst2:e19f53969b47243f",
+        "ts": "2026-09-25T08:26:56.627Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "90c7a610d5901f1d844fd9ee62a5ae78cec108437d7b46aeb7ed38209b24d232",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:31.100Z",
+          "ttl_ms": 5000
+        },
+        "prev": "04880287faa393fc13d5d81a433c39cc5289d8434e2cd85220ad17b59f89a489",
+        "seq": 17,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst3:9921155404917975",
+        "ts": "2026-09-25T08:26:56.634Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "683cbf541a6d823cbc83f29db76cd1b4114bc57701e39100fe62a54d1efb0cb9",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:32.153Z",
+          "ttl_ms": 5000
+        },
+        "prev": "90c7a610d5901f1d844fd9ee62a5ae78cec108437d7b46aeb7ed38209b24d232",
+        "seq": 18,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst4:1bdc888159aa4dfd",
+        "ts": "2026-09-25T08:26:56.640Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95:vcs.push.main",
+        "actor": "system:gate",
+        "alg": "sha256/jcs",
+        "daemon": "daemon-fixture-1",
+        "event": "approval.expired",
+        "hash": "b6656e5187dc029f75eeab7b831c012f83e8487e1f2281df0f20f4cf503d9cd5",
+        "payload": {
+          "class": "vcs.push.main",
+          "harness_cap_ms": 65000,
+          "on_expiry": "reject",
+          "requested_ts": "2026-09-25T08:26:33.196Z",
+          "ttl_ms": 5000
+        },
+        "prev": "683cbf541a6d823cbc83f29db76cd1b4114bc57701e39100fe62a54d1efb0cb9",
+        "seq": 19,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-burst5:93c937efc1754b95",
+        "ts": "2026-09-25T08:26:56.646Z"
+      }
+    ],
+    "cursor": {
+      "seq": 19,
+      "hash": "b6656e5187dc029f75eeab7b831c012f83e8487e1f2281df0f20f4cf503d9cd5"
+    },
+    "caught_up": true,
+    "exit_code": 0
+  }
+}

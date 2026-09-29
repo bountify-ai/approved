@@ -1,0 +1,10 @@
+{
+  "http_status": 403,
+  "body": {
+    "error": {
+      "code": "serve-agent-forbidden",
+      "message": "/log/follow answers to the TENANT credential. The agent credential reaches the hook and the verbs a harness under oversight needs in order to ask and to act on a grant; it never reaches the log it is judged by, the store export, the tenant's own status report, or anything that runs on the host"
+    },
+    "exit_code": 2
+  }
+}

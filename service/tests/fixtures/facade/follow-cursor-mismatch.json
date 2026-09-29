@@ -1,0 +1,12 @@
+{
+  "http_status": 409,
+  "body": {
+    "error": {
+      "code": "integrity",
+      "message": "log /data/fixture/.approval/log/events.jsonl does not match subscription cursor seq 3 hash 0000000000000000000000000000000000000000000000000000000000000000: the retained prefix was truncated, replaced, or belongs to another log",
+      "reason": "cursor-mismatch"
+    },
+    "exit_code": 1,
+    "records": []
+  }
+}
