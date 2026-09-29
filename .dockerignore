@@ -1,0 +1,6 @@
+# Root build context (the Maritime judge image): the service package only.
+*
+!service/pyproject.toml
+!service/uv.lock
+!service/src/
+**/__pycache__

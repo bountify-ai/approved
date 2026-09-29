@@ -1,7 +1,7 @@
 SERVICE := service
 UV := uv --directory $(SERVICE)
 
-.PHONY: setup test lint format typecheck check eval demo demo-agent demo-down demo-smoke
+.PHONY: setup test lint format typecheck check eval demo demo-agent demo-down demo-smoke cli-help
 
 setup:
 	$(UV) sync
@@ -24,6 +24,11 @@ check: lint typecheck test
 
 eval:
 	$(UV) run python -m approved evaluate --offline
+
+# The operator CLI (Maritime). See README "Operator CLI"; nothing here runs a maritime call.
+cli-help:
+	$(UV) run approved --help
+	$(UV) run approved provision --help
 
 # The local demo (Docker): gate + AI judge + fake Telegram. See demo/README.md.
 demo:

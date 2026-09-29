@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn>=0.29",
 ]
 
+[project.scripts]
+approved = "approved.__main__:main_entry"
+
 [dependency-groups]
 dev = [
     "pytest>=8",
