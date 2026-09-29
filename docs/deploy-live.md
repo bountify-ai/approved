@@ -90,7 +90,9 @@ maritime --json stop approved-judge && maritime --json start approved-judge
 2. **Console.** `https://api.maritime.sh/a/<judge-id>/` redirects to `/a/<judge-id>/login`;
    sign in with the console token and the live view shows the follow as `ok`.
 3. **A live advisory.** Trigger a gated request (for example
-   `approved ask <tenant>-hermes "push the README fix to main"`). The approver's chat gets the
+   `approved ask <tenant>-hermes "push the README fix to main"`; for a protected machine such as
+   dogfood's, name it exactly: `approved ask --allow-target approval-hermes-gated
+   approval-hermes-gated "..."`). The approver's chat gets the
    gate's prompt and, from the judge bot, a message starting "Judge (advisory AI, not an
    approval)" with a `Trace:` link.
 4. **A Weave trace.** The link opens an `approved.judge` call in
@@ -124,6 +126,10 @@ for the agent machine, scoped and rotated as if the agent held it, because it ef
 does (see [SECURITY.md](../SECURITY.md#known-gaps)).
 
 Stop and start the Hermes machine only while no approval request is open.
+
+To read a protected daemon's status (for example dogfood's), name the machine exactly:
+`approved status dogfood --allow-target approval-dogfood`. `--allow-target` exists only on the
+read-only `ask` and `status`; `provision` refuses every protected name and has no such flag.
 
 ## Removing it
 

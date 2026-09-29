@@ -23,19 +23,27 @@ def status(
     *,
     http: httpx.Client | None = None,
     out: Callable[[str], None] = print,
+    allow_target: str | None = None,
 ) -> dict[str, Any]:
+    """``allow_target`` names the daemon machine exactly (a protected machine such as the
+    dogfood daemon is not called ``<tenant>-daemon``); ``tenant`` then only names the store."""
     tenant = validate_tenant(tenant)
-    daemon = f"{tenant}-daemon"
-    refuse_protected(tenant)
+    if allow_target is None:
+        daemon = f"{tenant}-daemon"
+        refuse_protected(tenant)
+    else:
+        daemon = allow_target
+        out(f"warning: --allow-target lets this read-only status reach {allow_target!r} only")
     report: dict[str, Any] = {"daemon": daemon}
 
     agent = maritime.find(daemon)
     if agent is None:
-        refuse_protected(daemon)
+        if allow_target is None:
+            refuse_protected(daemon)
         out(f"{daemon}: not found")
         report["machine"] = "missing"
         return report
-    detail = resolve_target(maritime, daemon)
+    detail = resolve_target(maritime, daemon, allow=allow_target)
     state = next(
         (detail.get(k) for k in ("status", "state") if isinstance(detail.get(k), str)), "unknown"
     )

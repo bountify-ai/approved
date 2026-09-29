@@ -92,11 +92,47 @@ def refuse_any_protected(answer: Any, *, what: str) -> list[str]:
     return found
 
 
-def resolve_target(maritime: Maritime, name: str) -> dict[str, Any]:
+_NAME_KEYS = ("name", "agentName", "agent_name")
+
+
+def _names(value: Any, _depth: int = 0) -> list[str]:
+    found: list[str] = []
+    if _depth > 8:
+        return found
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _NAME_KEYS and isinstance(item, str) and item.strip():
+                found.append(item)
+            elif isinstance(item, dict | list):
+                found += _names(item, _depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            found += _names(item, _depth + 1)
+    return found
+
+
+def resolve_target(maritime: Maritime, name: str, *, allow: str | None = None) -> dict[str, Any]:
     """Resolve ``name`` (a name or an id) through ``maritime --json status`` and refuse if
     anything it resolves to is protected, by name or id, at any depth; or if it resolves to
-    nothing identifiable. The typed name is checked first."""
-    refuse_protected(name)
-    agent = maritime.status(name.strip())
-    refuse_any_protected(agent, what=name.strip())
+    nothing identifiable. The typed name is checked first.
+
+    ``allow`` (``--allow-target``, read-only commands only) permits exactly ONE protected
+    machine: the typed name must equal it, and every name the answer resolves to must equal it,
+    case-sensitively. Anything else in the answer is checked as usual.
+    """
+    typed = name.strip()
+    if allow is None or typed != allow:
+        refuse_protected(typed)
+    agent = maritime.status(typed)
+    if allow is None:
+        refuse_any_protected(agent, what=typed)
+        return agent
+    names = _names(agent)
+    if not names:
+        raise ProtectedName(f"refusing: maritime's answer for {typed} names no agent")
+    for resolved in names:
+        if resolved != allow:
+            refuse_protected(resolved)  # a different name: the usual rules, no exemption
+    if allow not in names:
+        refuse_any_protected(agent, what=typed)
     return agent
