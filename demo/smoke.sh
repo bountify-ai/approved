@@ -140,7 +140,7 @@ chat = json.load(open(sys.argv[2]))["messages"]
 state = json.load(open(sys.argv[3]))
 requests = [r for r in log if r["event"] == "approval.requested"]
 decided = {r["action_key"]: r["event"] for r in log if r["event"] in ("approval.granted", "approval.rejected")}
-advisories = [m for m in chat if m["text"].startswith("Judge (advisory, AI)")]
+advisories = [m for m in chat if "Judge (advisory AI, not an approval)" in m["text"]]
 by_class = {}
 for m in advisories:
     klass = m["text"].rsplit("Request class: ", 1)[-1]
@@ -202,6 +202,20 @@ while IFS='=' read -r name value; do
   if printf '%s' "$logs" | grep -qF -- "$secret"; then leaked="$leaked $name"; fi
 done < <(cat "$here/.state/daemon.env" "$here/.state/judge.env" "$here/.state/agent.env")
 [ -z "$leaked" ] && ok "no generated credential appears in any container's log" || no "leaked:${leaked}"
+
+# A real W&B key, when the operator's shell has one (live mode), may reach only the judge
+# service, through its environment. `docker inspect` of every other container must not hold it.
+if [ -n "${WANDB_API_KEY:-}" ]; then
+  holders=""
+  for id in $("${compose[@]}" ps -aq); do
+    name="$(docker inspect -f '{{.Name}}' "$id")"
+    case "$name" in *-service-*) continue ;; esac
+    if docker inspect "$id" | grep -qF -- "$WANDB_API_KEY"; then holders="$holders $name"; fi
+  done
+  [ -z "$holders" ] && ok "the W&B key is in no container but the judge's" || no "W&B key visible in:${holders}"
+else
+  printf '  NOTE  WANDB_API_KEY unset: offline run, no W&B key to look for\n'
+fi
 
 elapsed=$(($(date +%s) - started))
 printf '\n== summary: %s passed, %s failed, %ss\n' "$pass" "$fail" "$elapsed"

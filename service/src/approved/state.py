@@ -18,12 +18,15 @@ Durability rules:
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import tempfile
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -107,6 +110,16 @@ class JudgedEntry(_Model):
 FeedbackStatus = Literal["pending", "sent", "failed", "not-applicable"]
 
 
+def _advisory(judged: JudgedEntry) -> str:
+    if judged.status == "notified":
+        return "sent"
+    if judged.status == "silent":
+        return "silent:delivery-failed"
+    if judged.status == "claimed":
+        return "absent:interrupted"
+    return f"absent:{judged.reason or judged.status}"
+
+
 class DecisionRecord(_Model):
     """The human's (or the TTL sweep's) terminal answer, and its Weave feedback status.
 
@@ -122,6 +135,9 @@ class DecisionRecord(_Model):
     feedback: FeedbackStatus = "pending"
     feedback_attempts: int = 0
     feedback_error: str | None = None
+    #: Whether the approver had the judge's advisory before deciding: ``sent``, or
+    #: ``silent:<why>`` / ``absent:<why>`` when they decided without one.
+    advisory: str = "unknown"
 
 
 class ChainBreak(_Model):
@@ -149,6 +165,20 @@ def _trim(mapping: dict[str, object], limit: int) -> None:
             del mapping[key]
 
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _locked(method: _F) -> _F:
+    """Serialise a StateStore method: the follow loop and the feedback thread share the store."""
+
+    @functools.wraps(method)
+    def wrapper(self: StateStore, *args: Any, **kwargs: Any) -> Any:
+        with self.lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
+
 class StateStore:
     """Load and atomically persist :class:`JudgeState` under ``state_dir``."""
 
@@ -156,6 +186,7 @@ class StateStore:
         self.dir = Path(state_dir)
         self.path = self.dir / STATE_FILENAME
         self.max_entries = max_entries
+        self.lock = threading.RLock()
         self.state = self._load(facade_url)
 
     def _load(self, facade_url: str) -> JudgeState:
@@ -182,6 +213,7 @@ class StateStore:
     def is_known(self, action_key: str) -> bool:
         return action_key in self.state.judged
 
+    @_locked
     def claim(self, action_key: str, seq: int) -> bool:
         """Mark ``action_key`` as being judged and persist. False if already known."""
         if action_key in self.state.judged:
@@ -190,10 +222,12 @@ class StateStore:
         self.save()
         return True
 
+    @_locked
     def settle(self, action_key: str, entry: JudgedEntry) -> None:
         self.state.judged[action_key] = entry
         self.save()
 
+    @_locked
     def record_decision(self, action_key: str, decision: DecisionRecord) -> bool:
         """Remember a terminal decision once and close its task context.
 
@@ -204,10 +238,18 @@ class StateStore:
         if action_key in self.state.decisions:
             return False
         judged = self.state.judged.get(action_key)
-        status = "pending" if judged is not None and judged.call_id else "not-applicable"
-        self.state.decisions[action_key] = decision.model_copy(update={"feedback": status})
+        if judged is None:
+            # Decided before the judge ever saw it (backlog, restart, or a request older than
+            # the judge's cursor). Recorded, so silence is visible, never mistaken for assent.
+            judged = JudgedEntry(status="absent", seq=decision.seq, reason="not-seen")
+            self.state.judged[action_key] = judged
+        status = "pending" if judged.call_id else "not-applicable"
+        self.state.decisions[action_key] = decision.model_copy(
+            update={"feedback": status, "advisory": _advisory(judged)}
+        )
         return True
 
+    @_locked
     def remember_task_summary(self, action_key: str, summary: str) -> None:
         """Hold a task summary until the request closes. Persisted with the next save."""
         self.state.task_context.pop(action_key, None)
@@ -216,6 +258,7 @@ class StateStore:
     def task_summary(self, action_key: str) -> str | None:
         return self.state.task_context.get(action_key)
 
+    @_locked
     def pending_feedback(self, max_attempts: int = MAX_FEEDBACK_ATTEMPTS) -> list[str]:
         return [
             key
@@ -223,6 +266,7 @@ class StateStore:
             if d.feedback in ("pending", "failed") and d.feedback_attempts < max_attempts
         ]
 
+    @_locked
     def mark_feedback(self, action_key: str, status: FeedbackStatus, error: str | None = None):
         current = self.state.decisions[action_key]
         attempts = current.feedback_attempts + (0 if status == "not-applicable" else 1)
@@ -231,10 +275,12 @@ class StateStore:
         )
         self.save()
 
+    @_locked
     def advance(self, cursor: Cursor) -> None:
         self.state.cursor = cursor
         self.save()
 
+    @_locked
     def mark_chain_break(self, reason: str, at_seq: int) -> ChainBreak:
         brk = ChainBreak(reason=reason, at_seq=at_seq)
         self.state.chain_break = brk
@@ -243,6 +289,7 @@ class StateStore:
 
     # --------------------------------------------------------------- persistence
 
+    @_locked
     def save(self) -> None:
         _trim(self.state.judged, self.max_entries)  # type: ignore[arg-type]
         _trim(self.state.decisions, self.max_entries)  # type: ignore[arg-type]
@@ -262,6 +309,7 @@ class StateStore:
             raise
         _fsync_dir(self.dir)
 
+    @_locked
     def snapshot(self) -> dict[str, object]:
         return json.loads(self.state.model_dump_json())
 

@@ -13,6 +13,7 @@ import pytest
 
 from approved import logs
 from approved.judge import CircuitBreaker
+from approved.notify import ADVISORY_PREFIX as PREFIX
 from approved.reviewer import Decision, InferenceError
 from approved.state import JudgedEntry
 from approved.worker import EXIT_CHAIN_BREAK, EXIT_FOLLOW_ERROR, EXIT_OK, policy_rule_for
@@ -38,7 +39,7 @@ def test_judges_a_request_and_sends_one_advisory(make_worker, facade, telegram) 
     worker = make_worker(reviewer)
     assert worker.run(once=True) == EXIT_OK
     assert telegram.texts == [
-        "Judge (advisory, AI): NEEDS_HUMAN, Push to main publishes the change. "
+        PREFIX + ": NEEDS_HUMAN, Push to main publishes the change. "
         "Trace: not traced (offline)\nRequest class: vcs.push.main"
     ]
     [seen] = reviewer.seen
@@ -141,7 +142,10 @@ def test_client_side_link_mismatch_is_a_chain_break(make_worker, telegram) -> No
     assert worker.store.state.chain_break is not None
     assert worker.store.state.chain_break.reason == "prev-mismatch"
     assert worker.store.state.cursor.seq == 0
-    assert all("Judge (advisory, AI): halted" in t for t in telegram.texts)
+    assert all(
+        "\U0001f9d1\u200d\u2696\ufe0f Judge (advisory AI, not an approval): halted" in t
+        for t in telegram.texts
+    )
 
 
 def test_reviewer_timeout_sends_nothing_and_the_loop_continues(
@@ -234,7 +238,7 @@ def test_decisions_are_recorded_for_feedback_and_hook_errors_are_contained(
     assert worker.run(once=True) == EXIT_OK
     assert calls == [
         ("k1", "approval.granted", "notified"),
-        ("other", "approval.withdrawn", None),
+        ("other", "approval.withdrawn", "absent"),  # never seen: recorded as not-seen
     ]
     assert worker.store.state.decisions["k1"].feedback == "pending"
     assert worker.store.state.decisions["other"].feedback == "not-applicable"
@@ -248,7 +252,7 @@ def test_real_capture_replays_through_the_worker(make_worker, telegram) -> None:
     worker = make_worker(facade_override=ReplayFacade(body=body), clock=lambda: captured_at)
     assert worker.run(once=True) == EXIT_OK
     [text] = telegram.texts
-    assert text.startswith("Judge (advisory, AI): NEEDS_HUMAN, Push to the default branch")
+    assert text.startswith(PREFIX + ": NEEDS_HUMAN, Push to the default branch")
     key = body["records"][2]["action_key"]
     assert worker.store.state.judged[key].decision == "NEEDS_HUMAN"
 

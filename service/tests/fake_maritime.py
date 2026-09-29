@@ -97,6 +97,7 @@ for token in rest:
         fail(4, f"-e expects KEY=value, got {token}")
 agents = state.setdefault("agents", [])
 find = {a["name"]: a for a in agents}
+find.update({a["id"]: a for a in agents if "id" in a})
 
 if cmd == "list":
     ok(agents)
@@ -131,6 +132,8 @@ if cmd == "exec":
     elif "sha256sum" in script:
         sha = state.get("remote_policy_sha")
         out = f"{sha}  /data/x/APPROVAL.md\n" if sha else ""
+    elif "queue --json" in script:
+        out = json.dumps(state.get("queue", {"ok": True, "pending": []}))
     elif "log verify" in script:
         out = json.dumps(state.get("verify", {"status": "clean", "records": 0}))
     elif "setsid" in script:

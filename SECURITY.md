@@ -21,6 +21,14 @@ that open it, the approver's decision channel, and the approver's attention.
 | Someone on the network | use the console, the facade or the webhook without the matching credential |
 | A careless operator or tool | print, log or pass a credential on a command line |
 
+**Silencing the judge.** An agent cannot stop the gate, but it can try to keep the judge quiet so
+an approver decides without a second opinion: requests shaped to time the reviewer out or trip
+its breaker, or bursts that keep the facade busy until requests are decided unread. Silence is
+never treated as assent, and it is visible: every decision records whether the advisory was
+sent (`advisory: sent`) or why not (`absent:timeout`, `absent:circuit-open`,
+`absent:already-decided`, `absent:not-seen`, ...), and the console shows "judge silent:
+<reason>" with counts by reason (`test_silence_is_recorded_and_shown`).
+
 **Out of scope.** A compromised daemon machine or Maritime itself; a compromised approver
 account; denial of service against Telegram.
 
@@ -61,11 +69,22 @@ The console and the CLI add:
 - **Logs.** The structured logger refuses any field whose name looks like a credential, and
   error paths report exception classes, HTTP statuses and closed-vocabulary codes, never
   exception text that could carry a URL (the Telegram token is part of the Bot API URL).
-- **Traces.** Inputs and outputs of the Weave op are redacted of bearer values, long hex runs,
-  key-prefixed strings and Telegram bot tokens. Weave's own Sentry error reporting is off by
+- **Traces.** Everything sent to Weave (the judge op's inputs and outputs, evaluation dataset
+  rows including `--include-state` cases, predictions, feedback payloads) is redacted of: URL
+  userinfo, `Bearer`/`Basic`/`token` values, JWTs, Telegram bot tokens, AWS access key ids,
+  key-prefixed secrets (`sk-`, `ghp_`, `wandb_`, ...), `--password`/`-p<secret>` flags, hex runs
+  of 32 or more, and long mixed-case base64 (`test_redaction_forms`). Weave's own Sentry error reporting is off by
   default (`WANDB_ERROR_REPORTING=false`), because it would send exception context to a
   third party.
-- **Console.** The session cookie is an HMAC of the console token, never the token. Strict
+- **Console.** The session cookie is `<issued_at>.<HMAC(token, issued_at)>`, never the token,
+  valid 12 hours and invalidated when the token rotates; `HttpOnly`, `SameSite=Strict`,
+  `Secure` outside demo mode, and `Path` set to the console's public prefix
+  (`PUBLIC_BASE_PATH`). **Shared origin:** on Maritime every public agent lives under
+  `https://api.maritime.sh`; the path scope keeps the cookie off other agents' paths, but pages
+  of another agent on the same origin are same-site and could still send requests with it, so
+  the CSRF token is what protects writes, and a console that matters belongs on its own origin.
+  Bodies are capped before they are read (8 KiB forms, 16 KiB preview), and the public POST
+  routes are rate-limited per client address. Strict
   CSP (`'self'` only, no inline script), frame denial, no CORS, double-submit CSRF.
 - **CLI.** Credentials are generated locally into `./.approved/<tenant>/` (0700 directory,
   0600 files), reach Maritime only through `maritime env import <agent> <file>`, and a
@@ -94,6 +113,25 @@ clean at seq 16. The positive control passed: the approver's grant let the exact
 Separate-machine placement decides cases 1 and 6 by construction and holds case 2 through the
 shim. The two failures sit elsewhere: case 4 is a property of the agent's machine, case 5 of
 the platform.
+
+## The judge's bot and its messages
+
+The judge never holds the approval bot's token. It posts through its own, second bot
+(`JUDGE_TG_BOT_TOKEN`), which the approver must `/start` once so it may message them; the
+judge refuses to start with the approval bot's token in its environment, and
+`approved provision --judge` refuses a judge bot file whose contents equal the approval bot's
+(compared locally, never printed). Every advisory starts "🧑‍⚖️ Judge (advisory AI, not an
+approval)", has no buttons, is sent without link previews, and has URLs and `/commands` in the
+model's text replaced with `[link removed]`; the only link it carries is a `wandb.ai` trace
+URL from our own formatter.
+
+## Transport
+
+The judge requires an `https` facade URL (http only for loopback, a compose service name, or
+demo mode). It recomputes every record's hash and checks every link, which catches corrupted
+or edited records and pins everything after its cursor. That does not authenticate new
+records: whoever controls the stream can hash records they invent, so TLS is the control
+against a man in the middle.
 
 ## Known gaps
 

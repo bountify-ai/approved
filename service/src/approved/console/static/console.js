@@ -24,10 +24,11 @@
   if (!region) return;
   var every = Number(region.getAttribute("data-refresh-ms")) || 3000;
   var stamp = document.getElementById("live-updated");
+  var base = (document.querySelector('meta[name="base-path"]') || {}).content || "";
   function tick() {
-    fetch("/partials/live", { credentials: "same-origin", cache: "no-store" })
+    fetch(base + "/partials/live", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) {
-        if (r.status === 401) { window.location.assign("/login"); return null; }
+        if (r.status === 401) { window.location.assign(base + "/login"); return null; }
         return r.ok ? r.text() : null;
       })
       .then(function (html) {

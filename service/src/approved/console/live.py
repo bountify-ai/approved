@@ -45,6 +45,7 @@ class RecentDecision:
     label: str | None
     trace_url: str | None
     feedback: str
+    advisory: str
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,23 @@ def counters(state: JudgeState) -> dict[str, Any]:
         "false_ready_rate": rate(false_ready, rejected),
         "escalation_rate": rate(needs_human, len(verdicts)),
         "absent": sum(1 for j in state.judged.values() if j.status == "absent"),
+        "silence": silence(state),
     }
+
+
+def silence(state: JudgeState) -> dict[str, int]:
+    """Why the judge said nothing, by reason: timeouts, parse and inference failures, an open
+    breaker, requests skipped as stale or already decided, and requests never seen."""
+    out: dict[str, int] = {}
+    for entry in state.judged.values():
+        if entry.status in ("absent", "skipped"):
+            key = entry.reason or entry.status
+        elif entry.status == "silent":
+            key = "delivery-failed"
+        else:
+            continue
+        out[key] = out.get(key, 0) + 1
+    return dict(sorted(out.items()))
 
 
 def load_view(state_dir: Path) -> LiveView:
@@ -135,6 +152,7 @@ def load_view(state_dir: Path) -> LiveView:
                 label=agreement(verdict, human),
                 trace_url=judged.trace_url if judged else None,
                 feedback=decision.feedback,
+                advisory=decision.advisory,
             )
         )
     recent.sort(key=lambda d: d.seq, reverse=True)

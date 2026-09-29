@@ -65,7 +65,9 @@ def test_unknown_record_fields_are_preserved() -> None:
         (lambda b: b["records"][0].__setitem__("hash", "not-a-hash"), "hash-malformed"),
         (lambda b: b["cursor"].__setitem__("seq", 2), "cursor-mismatch"),
         (lambda b: b["cursor"].__setitem__("hash", "f" * 64), "cursor-mismatch"),
-        (lambda b: b["records"][0].__setitem__("event", 7), "record-malformed"),
+        (lambda b: b["records"][0].__setitem__("event", 7), "hash-mismatch"),
+        (lambda b: b["records"][2]["payload"].__setitem__("summary", "ls"), "hash-mismatch"),
+        (lambda b: b["records"][0].__setitem__("alg", "sha1/none"), "alg-unsupported"),
     ],
 )
 def test_broken_links_are_chain_breaks(mutate, reason: str) -> None:
@@ -75,6 +77,27 @@ def test_broken_links_are_chain_breaks(mutate, reason: str) -> None:
     with pytest.raises(ChainBreakError) as info:
         verify_page(body, Cursor())
     assert info.value.reason == reason
+
+
+def test_hashes_are_recomputed_with_the_runtime_scheme() -> None:
+    """Every captured record's hash is SHA-256 over JCS without ``hash`` (core SPEC 8)."""
+    from approved.follow import record_hash
+
+    for record in LATEST["records"]:
+        assert record_hash(record) == record["hash"]
+
+
+def test_a_well_hashed_but_malformed_record_is_still_refused() -> None:
+    from approved.follow import record_hash
+
+    body = copy.deepcopy(GENESIS)
+    bad = body["records"][0]
+    bad["event"] = 7
+    bad["hash"] = record_hash(bad)
+    body["records"][1]["prev"] = bad["hash"]  # keep the links; the next record will not verify
+    with pytest.raises(ChainBreakError) as info:
+        verify_page({**body, "records": [bad]}, Cursor())
+    assert info.value.reason == "record-malformed"
 
 
 def test_first_record_must_link_to_cursor_hash() -> None:
@@ -159,8 +182,9 @@ def test_fake_facade_guard_catches_writes_and_agent_credential() -> None:
     http = fake.client()
     http.post(f"{FACADE_URL}/verb/request", headers={"Authorization": f"Bearer {TENANT_TOKEN}"})
     http.post(f"{FACADE_URL}/hook/hermes", headers={"Authorization": f"Bearer {TENANT_TOKEN}"})
+    http.post(f"{FACADE_URL}/verb/queue", headers={"Authorization": f"Bearer {TENANT_TOKEN}"})
     with contextlib.suppress(CredentialError):
         _client(fake, token=AGENT_TOKEN).follow_page(Cursor(), 1)
     assert any("forbidden route ('POST'" in v for v in fake.violations)
-    assert sum("forbidden route" in v for v in fake.violations) == 2
+    assert sum("forbidden route" in v for v in fake.violations) == 3
     assert any("agent credential" in v for v in fake.violations)

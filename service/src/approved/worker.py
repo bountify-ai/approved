@@ -25,6 +25,7 @@ a page that was not verified.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
@@ -102,6 +103,8 @@ class FollowStatus:
             "head_seq": 0,
             "caught_up": False,
             "pages": 0,
+            "breaker": "closed",
+            "follow_failures": 0,
         }
 
     def update(self, **fields: Any) -> None:
@@ -172,6 +175,7 @@ class Worker:
         policy_file: Path | None = None,
         on_decision: DecisionHook = _noop_hook,
         on_idle: Callable[[], object] = _noop,
+        on_shutdown: Callable[[], object] = _noop,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.facade = facade
@@ -184,6 +188,7 @@ class Worker:
         self.policy_file = policy_file
         self.on_decision = on_decision
         self.on_idle = on_idle
+        self.on_shutdown = on_shutdown
         self._clock = clock
         self._stop = threading.Event()
         self.status = FollowStatus(clock)
@@ -220,6 +225,8 @@ class Worker:
             return self._loop(once=once)
         finally:
             self.status.update(running=False)
+            with contextlib.suppress(Exception):
+                self.on_shutdown()
 
     def _loop(self, *, once: bool) -> int:
         self._idle()
@@ -227,8 +234,10 @@ class Worker:
             result = self.step()
             if result.chain_break:
                 return EXIT_CHAIN_BREAK
+            self.status.update(breaker=self.judge.breaker.state)
             if result.error is not None:
                 self._failures += 1
+                self.status.update(follow_failures=self._failures)
                 growth = max(0, self._failures - QUICK_RETRIES)
                 delay = min(self.poll_interval_s * (2**growth), MAX_BACKOFF_S)
                 if once:
@@ -237,6 +246,7 @@ class Worker:
                 self._stop.wait(delay)
                 continue
             self._failures = 0
+            self.status.update(follow_failures=0)
             if result.caught_up:
                 self._idle()
                 if once:

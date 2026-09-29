@@ -29,7 +29,7 @@ EOF
 # The judge holds the TENANT credential only, and its own bot token.
 cat >"$state/judge.env" <<EOF
 TENANT_TOKEN=${tenant_token}
-TG_BOT_TOKEN=${judge_bot}
+JUDGE_TG_BOT_TOKEN=${judge_bot}
 CONSOLE_TOKEN=${console_token}
 EOF
 # The agent holds the AGENT credential only.

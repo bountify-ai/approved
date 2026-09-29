@@ -75,7 +75,7 @@ def test_agent_credential_in_environment_refuses(name: str) -> None:
 
 def test_secrets_never_in_repr_or_errors() -> None:
     s = load_settings(
-        {**BASE, "OFFLINE": "1", "TG_BOT_TOKEN": "123:bot-value", "WANDB_API_KEY": "wk-value"}
+        {**BASE, "OFFLINE": "1", "JUDGE_TG_BOT_TOKEN": "123:bot-value", "WANDB_API_KEY": "wk-value"}
     )
     text = repr(s) + str(s.model_dump())
     for secret in ("inline-tenant-credential", "bot-value", "wk-value"):
@@ -83,3 +83,48 @@ def test_secrets_never_in_repr_or_errors() -> None:
     with pytest.raises(ConfigError) as info:
         load_settings({**BASE, "OFFLINE": "1", "FOLLOW_LIMIT": "inline-tenant-credential"})
     assert "inline-tenant-credential" not in str(info.value)
+
+
+def _bundle_agent_names() -> list[str]:
+    from approved.console.bundle import daemon_env, hermes_env, hook_env
+
+    names = [v.name for v in hermes_env("acme-co", "https://f.test") if v.ref == "agent"]
+    names += [v.name for v in hook_env("acme-co", "https://f.test") if v.ref == "agent"]
+    names += [v.name for v in daemon_env("acme-co", "https://f.test", "op") if v.ref == "agent"]
+    names += ["APPROVAL_FACADE_TOKEN_ENV", "HOSTED_ACME_CO_FACADE_AGENT_TOKEN_FILE"]
+    return names
+
+
+@pytest.mark.parametrize("name", _bundle_agent_names())
+def test_bundle_agent_credential_names_are_refused(name: str) -> None:
+    with pytest.raises(ConfigError, match="agent credential") as info:
+        load_settings({**BASE, "OFFLINE": "1", name: "agent-secret-value-xyz"})
+    assert "agent-secret-value-xyz" not in str(info.value)
+
+
+@pytest.mark.parametrize("name", ["HOSTED_ACME_TG_BOT_TOKEN", "APPROVAL_TG_TOKEN"])
+def test_the_approval_bot_token_is_refused(name: str) -> None:
+    with pytest.raises(ConfigError, match="approval bot token"):
+        load_settings({**BASE, "OFFLINE": "1", name: "7001:gate-bot-secret"})
+
+
+@pytest.mark.parametrize(
+    ("url", "demo", "ok"),
+    [
+        ("https://api.maritime.sh/a/x", False, True),
+        ("http://facade.example.com", False, False),
+        ("http://10.0.0.5:8080", False, False),
+        ("http://localhost:8088", False, True),
+        ("http://127.0.0.1:8088", False, True),
+        ("http://daemon:8080", False, True),
+        ("http://facade.example.com", True, True),
+        ("ftp://x", True, False),
+    ],
+)
+def test_facade_url_must_be_https_off_loopback(url: str, demo: bool, ok: bool) -> None:
+    env = {**BASE, "OFFLINE": "1", "FACADE_URL": url, **({"APPROVED_DEMO": "1"} if demo else {})}
+    if ok:
+        assert load_settings(env).facade_url == url.rstrip("/")
+    else:
+        with pytest.raises(ConfigError, match="https"):
+            load_settings(env)

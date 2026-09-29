@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
-import threading
 from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
@@ -32,6 +31,7 @@ from .logs import log
 from .notify import Notifier, NullNotifier, TelegramNotifier
 from .reviewer import LiveReviewer, OfflineReviewer, Reviewer
 from .state import StateError, StateStore
+from .supervise import WorkerRunner
 from .worker import Worker
 
 EXIT_CONFIG = 2
@@ -54,11 +54,11 @@ def build_reviewer(settings: InferenceSettings) -> Reviewer:
 
 
 def build_notifier(settings: Settings) -> Notifier:
-    if settings.tg_bot_token is None or not settings.tg_chat_id:
-        log("notify.off", reason="TG_BOT_TOKEN(_FILE) or TG_CHAT_ID unset")
+    if settings.judge_bot_token is None or not settings.tg_chat_id:
+        log("notify.off", reason="JUDGE_TG_BOT_TOKEN(_FILE) or TG_CHAT_ID unset")
         return NullNotifier()
     return TelegramNotifier(
-        settings.tg_bot_token,
+        settings.judge_bot_token,
         settings.tg_chat_id,
         api_base=settings.tg_api_base,
         timeout_s=settings.http_timeout_s,
@@ -73,6 +73,7 @@ def build_worker(settings: Settings) -> Worker:
         WeaveFeedbackClient(weave_handle.client) if weave_handle else None,
         timeout_s=settings.feedback_timeout_s,
     )
+    feedback.start()  # its own thread: the follow loop never waits on Weave
     judge = Judge(
         build_reviewer(settings),
         timeout_s=settings.judge_timeout_s,
@@ -94,6 +95,7 @@ def build_worker(settings: Settings) -> Worker:
         policy_file=settings.policy_file,
         on_decision=feedback.on_decision,
         on_idle=feedback.drain,
+        on_shutdown=feedback.stop,
     )
 
 
@@ -123,16 +125,6 @@ def serve() -> int:
     from .console.app import context_from_settings, create_app
 
     app = create_app(context_from_settings(settings, worker.status.snapshot))
-    result: list[int] = []
-    thread = threading.Thread(target=lambda: result.append(worker.run()), name="worker")
-    thread.start()
-    log(
-        "console.start",
-        host=settings.console_host,
-        port=settings.console_port,
-        auth=settings.console_token is not None,
-        demo=settings.demo_mode,
-    )
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -143,11 +135,26 @@ def serve() -> int:
             proxy_headers=True,
         )
     )
-    server.run()  # returns on SIGTERM/SIGINT (uvicorn's handlers)
+
+    def shutdown() -> None:
+        server.should_exit = True
+
+    runner = WorkerRunner(worker.run, update_status=worker.status.update, shutdown=shutdown)
+    runner.start()
+    log(
+        "console.start",
+        host=settings.console_host,
+        port=settings.console_port,
+        auth=settings.console_token is not None,
+        demo=settings.demo_mode,
+    )
+    server.run()  # returns on SIGTERM/SIGINT (uvicorn's handlers), or when the worker degrades
+    runner.request_stop()
     worker.stop()
-    thread.join(timeout=60)
-    log("console.stop")
-    return result[0] if result else 0
+    runner.join(timeout=60)
+    code = runner.exit_code or 0
+    log("console.stop", exit_code=code, degraded=runner.degraded_reason)
+    return code
 
 
 def evaluate(args: argparse.Namespace) -> int:

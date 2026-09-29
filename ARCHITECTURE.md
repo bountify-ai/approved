@@ -28,7 +28,8 @@ moves, why the judge is advisory, and how state and idempotency work.
    no buttons.
 4. **Model output → human.** Reviewer text is untrusted: collapsed to one line, capped at 300
    characters, redacted of token-shaped strings, and HTML-escaped before Telegram.
-5. **Operator → console.** One shared console token; the session cookie is an HMAC of it.
+5. **Operator → console.** One shared console token; the session cookie is a timestamped HMAC
+   of it (12-hour server-side lifetime, invalidated when the token rotates).
    `/policy` and `/health` are public; the policy page's judge preview runs the offline rules
    only, so an unauthenticated page can never spend a model call.
 
@@ -39,8 +40,8 @@ moves, why the judge is advisory, and how state and idempotency work.
 | Agent (`APPROVAL_SERVE_AGENT_TOKEN`) | daemon (to check it), the agent's hook | `/hook/hermes`, the agent verb subset | the judge (it refuses to start if one is in its environment) |
 | Tenant (`APPROVAL_SERVE_TENANT_TOKEN`) | daemon (to check it), the judge, operator tools | `/log/follow`, `/export`, `/status`, tenant verbs | the agent |
 | Console (`CONSOLE_TOKEN`) | the judge service | console sign-in | the browser (it only ever sees the HMAC-derived cookie) |
-| Approval bot token | daemon | Telegram, as the approval bot | the judge, the agent |
-| Judge bot token | judge | Telegram `sendMessage`, as the judge | the daemon, the agent |
+| Approval bot token (`HOSTED_<TENANT>_TG_BOT_TOKEN`) | daemon | Telegram, as the approval bot | the judge (it refuses to start with one in its environment; `provision --judge` refuses a judge bot file equal to it), the agent |
+| Judge bot token (`JUDGE_TG_BOT_TOKEN`) | judge | Telegram `sendMessage`, as the judge: a second bot the approver has `/start`ed | the daemon, the agent |
 | Webhook secret | daemon, Telegram | the daemon's `/telegram/webhook` | everyone else |
 | W&B key | judge | Weave, W&B Inference | the agent machine (see the known gap in [SECURITY.md](SECURITY.md)) |
 
@@ -106,7 +107,9 @@ judge has done, never the truth about the log.
   most three times, and the client skips feedback already present on the call.
 - **Task context.** A task's summary is kept until its request closes, so a restart between
   registration and request does not lose the reviewer's context.
-- **Chain break.** Persisted and terminal: the worker exits 3 and refuses to follow until an
+- **Chain break.** Every record's hash is recomputed (SHA-256 over JCS, core SPEC section 8)
+  and every link checked. A break is persisted and terminal: the worker exits 3 and refuses to
+  follow until an
   operator investigates.
 - **Fail closed on bad state.** A state file that does not parse, or that belongs to a
   different facade, refuses to load.

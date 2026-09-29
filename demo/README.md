@@ -21,7 +21,7 @@ in about 10 seconds.
 |---|---|
 | `daemon` | The hosted approval.md daemon image, vendored unchanged in [`images/daemon/`](../images/daemon/): `approval up`, the authenticated facade `approval serve`, and the Telegram channel in **webhook mode**. |
 | `fake-telegram` | [`fake-telegram/server.mjs`](fake-telegram/server.mjs): a fake Bot API with a chat page at <http://127.0.0.1:8090/>. The Approve and Reject buttons deliver the tap to the daemon's webhook as the demo approver (Telegram account 4242), with the secret the daemon registered, as Telegram would. |
-| `service` | The Approved judge (`python -m approved serve`): the worker, which follows the log with the TENANT credential and posts advisories through its own bot into the same chat, plus the **operator console** at <http://127.0.0.1:8091/> in the same process. |
+| `service` | The Approved judge (posting through its own bot, never the approval bot's) (`python -m approved serve`): the worker, which follows the log with the TENANT credential and posts advisories through its own bot into the same chat, plus the **operator console** at <http://127.0.0.1:8091/> in the same process. |
 | `agent` | [`agent/agent.py`](agent/agent.py), a one-shot scripted agent (compose profile `agent`). It posts Hermes-shaped hook envelopes to `/hook/hermes` with the AGENT credential and re-asks while the answer is `hook-timeout`, as the Hermes hook shim does. |
 | `init` | The demo init step (see below). |
 
@@ -74,7 +74,9 @@ Offline, the judge uses the deterministic rules-based reviewer. With `WANDB_API_
 `REVIEWER_MODEL` set in your shell (plus `WANDB_ENTITY` and `WANDB_PROJECT` if not
 `bountify/judgy`), `make demo` starts it live: W&B Inference reviews each request, the
 advisory carries a Weave trace link, and your decisions are attached to the call as Weave
-feedback. Those values pass from your shell to the container and are never written to a file.
+feedback. Those values pass from your shell to the judge's container environment and are never
+written to a file; anyone who can run `docker inspect` on your machine can read them there.
+`make demo-smoke` checks that a W&B key set in your shell reaches no other container.
 
 ## Inspecting
 

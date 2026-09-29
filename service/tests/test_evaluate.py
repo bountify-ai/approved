@@ -121,3 +121,28 @@ def test_cli_offline_prints_the_report(monkeypatch: pytest.MonkeyPatch, capsys) 
     assert report["mode"] == "offline"
     assert report["summary"]["examples"] == 4
     assert report["evaluation_url"] is None
+
+
+def test_weave_bound_rows_are_redacted(tmp_path: Path) -> None:
+    from approved.evaluate import dataset_rows
+
+    store = StateStore(tmp_path, "https://f.test")
+    store.settle(
+        "k",
+        JudgedEntry(
+            status="notified",
+            seq=1,
+            decision="READY",
+            action_class="vcs.push.branch",
+            summary="git push https://bot:ghp_abcdefghijklmnopqrstu1234@github.com/x/y",
+        ),
+    )
+    store.record_decision(
+        "k", DecisionRecord(event="approval.granted", actor="human:c", seq=2, ts="t")
+    )
+    store.save()
+    [case] = scenarios_from_state(tmp_path)
+    assert "ghp_abcdefghijklmnopqrstu1234" not in (case.summary or "")
+    rows = dataset_rows([case, *load_dataset().scenarios])
+    blob = json.dumps(rows)
+    assert "ghp_abcdefghijklmnopqrstu1234" not in blob

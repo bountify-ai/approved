@@ -251,3 +251,57 @@ def test_worker_attaches_feedback_and_survives_a_failing_backend(
     call_id, items = client.calls[-1]
     assert call_id == "call-k1"
     assert items[1][1]["label"] == "escalated"
+
+
+# ------------------------------------------------------------------ N3: off the follow thread
+
+
+def test_follow_loop_never_waits_on_weave(make_worker, facade, telegram) -> None:
+    import time
+
+    release = threading.Event()
+
+    class Hanging:
+        def add(self, call_id: str, items: list) -> int:
+            release.wait(10)
+            return len(items)
+
+    worker = make_worker(ScriptedReviewer([verdict()]), tracer=CallIdTracer())
+    sender = FeedbackSender(worker.store, Hanging(), timeout_s=30)
+    sender.start()
+    worker.on_decision, worker.on_idle = sender.on_decision, sender.drain
+    facade.append(request_event("k1"))
+    worker.run(once=True)
+    facade.append(decision_event("k1"), request_event("k2"))
+    started = time.monotonic()
+    try:
+        worker.run(once=True)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        sender.stop()
+    assert elapsed < 2.0, "the follow loop waited on a hanging Weave call"
+    assert worker.store.state.judged["k2"].status == "notified"
+
+
+def test_a_full_feedback_queue_drops_and_counts(tmp_path: Path) -> None:
+    release = threading.Event()
+
+    class Hanging:
+        def add(self, call_id: str, items: list) -> int:
+            release.wait(10)
+            return 0
+
+    store = StateStore(tmp_path, URL)
+    for i in range(4):
+        store.settle(f"k{i}", _judged())
+        store.record_decision(f"k{i}", _decision(seq=10 + i))
+    sender = FeedbackSender(store, Hanging(), timeout_s=30, queue_size=1)
+    sender.start()
+    try:
+        for i in range(4):
+            sender.submit(f"k{i}")
+    finally:
+        release.set()
+        sender.stop()
+    assert logs.METRICS.get("feedback.dropped") >= 1

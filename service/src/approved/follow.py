@@ -18,12 +18,23 @@ receives, the way ``validateFollowPage`` in approval-md-hosted
 * each record's ``prev`` is the previous record's ``hash``;
 * the returned cursor is the last record (or the unchanged cursor for an empty page).
 
+* every record's ``hash`` recomputes: ``alg`` must be ``sha256/jcs`` and ``hash`` must equal
+  SHA-256 over the RFC 8785 (JCS) serialization of the record without ``hash`` (core SPEC
+  section 8; verified against real runtime output in ``tests/fixtures/facade``).
+
 A mismatch is a :class:`ChainBreakError`. The caller stops judging; it never skips ahead.
-Hashes are not recomputed here: that is ``approval log verify``'s job on the daemon side.
+
+What this does and does not prove: recomputation catches corrupted or edited records and a
+continuity check pins everything after the cursor to what the judge already read. It does
+not authenticate new records: whoever controls the stream can recompute hashes for records
+they invent. Only TLS does that, which is why a non-loopback facade must be ``https``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -41,6 +52,8 @@ __all__ = [
     "FollowError",
     "FollowPage",
     "LogRecord",
+    "jcs",
+    "record_hash",
     "verify_page",
 ]
 
@@ -95,6 +108,54 @@ class FollowPage:
     caught_up: bool
 
 
+HASH_ALG = "sha256/jcs"
+
+
+def _jcs_number(value: float) -> str:
+    """ECMAScript Number-to-string, as RFC 8785 requires for non-integral numbers."""
+    if not math.isfinite(value):
+        raise ValueError("non-finite number")
+    if value == int(value) and abs(value) < 1e21:
+        return str(int(value))
+    text = repr(value)
+    if "e" in text:
+        mantissa, exp = text.split("e")
+        sign = "-" if exp.startswith("-") else "+"
+        return f"{mantissa}e{sign}{int(exp.lstrip('+-'))}"
+    return text
+
+
+def jcs(value: object) -> str:
+    """RFC 8785 canonical JSON for the value types a log record holds."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _jcs_number(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ",".join(jcs(v) for v in value) + "]"
+    if isinstance(value, dict):
+        keys = sorted(value, key=lambda k: str(k).encode("utf-16-be"))
+        return (
+            "{"
+            + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + jcs(value[k]) for k in keys)
+            + "}"
+        )
+    raise ValueError(f"unsupported JSON value {type(value).__name__}")
+
+
+def record_hash(record: dict[str, object]) -> str:
+    body = {k: v for k, v in record.items() if k != "hash"}
+    return hashlib.sha256(jcs(body).encode("utf-8")).hexdigest()
+
+
 def _safe_code(value: object) -> str:
     """A closed-vocabulary code from a response, or a placeholder. Never free text."""
     if isinstance(value, str) and _CODE.match(value):
@@ -134,6 +195,14 @@ def verify_page(body: object, cursor: Cursor) -> FollowPage:
             raise ChainBreakError("hash-malformed", expect_seq)
         if prev != expect_prev:
             raise ChainBreakError("prev-mismatch", expect_seq)
+        if raw.get("alg") != HASH_ALG:
+            raise ChainBreakError("alg-unsupported", expect_seq)
+        try:
+            recomputed = record_hash(raw)
+        except ValueError:
+            raise ChainBreakError("record-unverifiable", expect_seq) from None
+        if recomputed != rhash:
+            raise ChainBreakError("hash-mismatch", expect_seq)
         try:
             parsed.append(LogRecord.model_validate(raw))
         except ValidationError:
