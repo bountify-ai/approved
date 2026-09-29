@@ -20,6 +20,7 @@ from approved.worker import EXIT_CHAIN_BREAK, EXIT_FOLLOW_ERROR, EXIT_OK, policy
 from .conftest import NOW
 from .fakes import (
     BlockingReviewer,
+    CallIdTracer,
     FakeFacade,
     ReplayFacade,
     ScriptedReviewer,
@@ -225,7 +226,7 @@ def test_decisions_are_recorded_for_feedback_and_hook_errors_are_contained(
         raise RuntimeError("feedback backend down")
 
     facade.append(request_event("k1"))
-    worker = make_worker(ScriptedReviewer([verdict()]), on_decision=hook)
+    worker = make_worker(ScriptedReviewer([verdict()]), on_decision=hook, tracer=CallIdTracer())
     worker.run(once=True)
     for event in ("approval.granted", "approval.expired"):
         facade.append(decision_event("k1", event))
@@ -314,3 +315,21 @@ def test_now_constant_is_thirty_seconds_after_synthetic_requests() -> None:
     from datetime import UTC, datetime
 
     assert datetime.fromtimestamp(NOW, UTC).isoformat() == "2026-09-29T12:00:30+00:00"
+
+
+def test_task_context_survives_restart_and_is_pruned_on_close(
+    make_worker, facade, telegram
+) -> None:
+    facade.append(task_event("k1", "ship the checkout fix"))
+    make_worker(ScriptedReviewer([verdict()])).run(once=True)  # registration only, then exit
+
+    reviewer = ScriptedReviewer([verdict()])
+    restarted = make_worker(reviewer)  # new process
+    assert restarted.store.task_summary("k1") == "ship the checkout fix"
+    facade.append(request_event("k1"))
+    restarted.run(once=True)
+    assert reviewer.seen[0].task_summary == "ship the checkout fix"
+
+    facade.append(decision_event("k1"))
+    restarted.run(once=True)
+    assert restarted.store.state.task_context == {}

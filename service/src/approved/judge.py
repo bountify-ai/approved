@@ -29,7 +29,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from .config import Settings
+from .bounded import run_bounded
+from .config import InferenceSettings
 from .logs import METRICS, log
 from .reviewer import (
     InferenceError,
@@ -48,6 +49,7 @@ __all__ = [
     "JudgeOutcome",
     "Ledger",
     "Tracer",
+    "WeaveHandle",
     "WeaveTracer",
     "init_weave",
 ]
@@ -200,7 +202,16 @@ class WeaveTracer:
         return result, (str(call_id) if call_id else None)
 
 
-def init_weave(settings: Settings) -> Tracer | None:
+@dataclass(frozen=True)
+class WeaveHandle:
+    """A live Weave session: the tracer for judge calls and the client ``weave.init`` returned
+    (used by :mod:`approved.feedback` and :mod:`approved.evaluate`)."""
+
+    tracer: WeaveTracer
+    client: Any
+
+
+def init_weave(settings: InferenceSettings) -> WeaveHandle | None:
     """Initialise Weave for ``<entity>/<project>``; ``None`` when off. Never raises.
 
     Off when ``OFFLINE=1`` or no W&B key is configured. The wandb client reads the key from
@@ -214,13 +225,13 @@ def init_weave(settings: Settings) -> Tracer | None:
         os.environ.setdefault("WANDB_API_KEY", settings.wandb_api_key.get_secret_value())
         import weave
 
-        weave.init(settings.weave_project)
+        client = weave.init(settings.weave_project)
     except Exception as exc:  # noqa: BLE001 - observability is never load-bearing
         log("weave.init-failed", level="warning", error=type(exc).__name__)
         METRICS.incr("weave.init_failed")
         return None
     log("weave.on", project=settings.weave_project)
-    return WeaveTracer()
+    return WeaveHandle(tracer=WeaveTracer(), client=client)
 
 
 # ---------------------------------------------------------------- judge
@@ -270,25 +281,19 @@ class Judge:
         if not self.breaker.allow():
             return self._absent(request, "circuit-open", 0.0)
 
-        box: dict[str, Any] = {}
-
-        def target() -> None:
-            try:
-                box["result"] = self.tracer.run(self.reviewer, request)
-            except BaseException as exc:  # noqa: BLE001 - handed to the caller, classified there
-                box["error"] = exc
-
         started = self._clock()
-        thread = threading.Thread(target=target, name=f"judge-seq-{request.seq}", daemon=True)
-        thread.start()
-        thread.join(self.timeout_s)
+        run = run_bounded(
+            lambda: self.tracer.run(self.reviewer, request),
+            self.timeout_s,
+            name=f"judge-seq-{request.seq}",
+        )
         latency = self._clock() - started
 
-        if thread.is_alive():
+        if run.timed_out:
             self.breaker.record_failure()
             return self._absent(request, "timeout", latency)
-        error = box.get("error")
-        if error is not None:
+        error = run.error
+        if error is not None or run.value is None:
             self.breaker.record_failure()
             if isinstance(error, ReviewerParseError):
                 reason: AbsentReason = "parse"
@@ -296,9 +301,10 @@ class Judge:
                 reason = "inference"
             else:
                 reason = "error"
-            return self._absent(request, reason, latency, error=type(error).__name__)
+            err_name = type(error).__name__ if error is not None else None
+            return self._absent(request, reason, latency, error=err_name)
 
-        verdict, call_id = box["result"]
+        verdict, call_id = run.value
         self.breaker.record_success()
         METRICS.incr("judge.verdict")
         METRICS.incr(f"judge.verdict.{verdict.decision.value}")

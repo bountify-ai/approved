@@ -66,13 +66,16 @@ def test_state_for_another_facade_refuses(tmp_path: Path) -> None:
 
 def test_decisions_recorded_once_and_marked_when_not_judged(tmp_path: Path) -> None:
     store = StateStore(tmp_path, URL)
-    store.claim("judged", 1)
+    store.settle("judged", JudgedEntry(status="notified", seq=1, decision="READY", call_id="c1"))
+    store.settle("offline", JudgedEntry(status="notified", seq=1, decision="READY"))
     rec = DecisionRecord(event="approval.granted", actor="human:c", seq=2, ts="t")
     assert store.record_decision("judged", rec) is True
     assert store.record_decision("judged", rec) is False
     assert store.record_decision("never-judged", rec) is True
     assert store.state.decisions["judged"].feedback == "pending"
     assert store.state.decisions["never-judged"].feedback == "not-applicable"
+    assert store.record_decision("offline", rec) is True
+    assert store.state.decisions["offline"].feedback == "not-applicable"
 
 
 def test_ledger_is_bounded(tmp_path: Path) -> None:

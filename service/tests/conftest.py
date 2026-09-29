@@ -16,7 +16,7 @@ from pydantic import SecretStr
 
 from approved import logs
 from approved.follow import FacadeClient
-from approved.judge import CircuitBreaker, Judge
+from approved.judge import CircuitBreaker, Judge, Tracer
 from approved.notify import TelegramNotifier
 from approved.reviewer import OfflineReviewer, Reviewer
 from approved.state import StateStore
@@ -70,6 +70,7 @@ def make_worker(
         *,
         timeout_s: float = 2.0,
         breaker: CircuitBreaker | None = None,
+        tracer: Tracer | None = None,
         state_dir: Path | None = None,
         clock: Callable[[], float] = lambda: NOW,
         facade_override: FakeFacade | None = None,
@@ -81,6 +82,7 @@ def make_worker(
             reviewer or OfflineReviewer(),
             timeout_s=timeout_s,
             breaker=breaker or CircuitBreaker(3, 60.0),
+            tracer=tracer,
             trace_url=lambda call_id: f"https://wandb.ai/e/p/r/call/{call_id}" if call_id else None,
         )
         return Worker(

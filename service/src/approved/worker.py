@@ -4,11 +4,12 @@ One step:
 
 1. Fetch one ``/log/follow`` page from the persisted cursor and verify its continuity.
 2. For each record, in log order:
-   * ``task.registered``: remember the task's action summaries (to give the reviewer context);
+   * ``task.registered``: persist each action's summary until its request closes, so a
+     restart between the registration and the request keeps the reviewer's context;
    * ``approval.requested``: judge it at most once, unless it is already decided later in the
      same page or older than ``JUDGE_MAX_AGE_S`` (a verdict nobody can use is noise);
-   * ``approval.granted`` / ``rejected`` / ``expired`` / ``withdrawn``: record the decision
-     for Weave feedback (unit 2) and call the decision hook.
+   * ``approval.granted`` / ``rejected`` / ``expired`` / ``withdrawn``: record the decision,
+     close the task context, and call the decision hook (Weave feedback, ``feedback.py``).
 3. Persist the cursor (atomic write) after the page is processed.
 
 Ordering gives at-least-once page processing with at-most-once judging: the action_key is
@@ -26,7 +27,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -63,7 +63,7 @@ TERMINAL_EVENTS = frozenset(
 )
 
 MAX_BACKOFF_S = 60.0
-TASK_CACHE_SIZE = 1000
+SUMMARY_CHARS = 500
 POLICY_CONTEXT_LINES = 6
 
 #: Called once per terminal decision: (action_key, decision, what the judge did or None).
@@ -71,6 +71,10 @@ DecisionHook = Callable[[str, DecisionRecord, JudgedEntry | None], None]
 
 
 def _noop_hook(action_key: str, decision: DecisionRecord, judged: JudgedEntry | None) -> None:
+    return None
+
+
+def _noop() -> None:
     return None
 
 
@@ -129,6 +133,7 @@ class Worker:
         max_age_s: float = 900.0,
         policy_file: Path | None = None,
         on_decision: DecisionHook = _noop_hook,
+        on_idle: Callable[[], object] = _noop,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.facade = facade
@@ -140,9 +145,9 @@ class Worker:
         self.max_age_s = max_age_s
         self.policy_file = policy_file
         self.on_decision = on_decision
+        self.on_idle = on_idle
         self._clock = clock
         self._stop = threading.Event()
-        self._tasks: OrderedDict[str, dict[str, str]] = OrderedDict()
         self._failures = 0
 
     # ------------------------------------------------------------------ control
@@ -169,6 +174,7 @@ class Worker:
             )
             return EXIT_CHAIN_BREAK
         log("worker.start", cursor_seq=self.store.state.cursor.seq, once=once)
+        self._idle()
         while not self._stop.is_set():
             result = self.step()
             if result.chain_break:
@@ -183,11 +189,20 @@ class Worker:
                 continue
             self._failures = 0
             if result.caught_up:
+                self._idle()
                 if once:
                     break
                 self._stop.wait(self.poll_interval_s)
         log("worker.stop", cursor_seq=self.store.state.cursor.seq, metrics=METRICS.snapshot())
         return EXIT_OK
+
+    def _idle(self) -> None:
+        """Background duties between pages (feedback retries). Never stops the loop."""
+        try:
+            self.on_idle()
+        except Exception as exc:  # noqa: BLE001 - an idle duty never stops the loop
+            METRICS.incr("worker.idle_failed")
+            log("worker.idle-failed", level="warning", error=type(exc).__name__)
 
     # ------------------------------------------------------------------ one step
 
@@ -238,26 +253,18 @@ class Worker:
         actions = record.payload.get("actions")
         if not isinstance(actions, list):
             return
-        summaries: dict[str, str] = {}
         for action in actions:
             if isinstance(action, dict):
                 key = _str(action.get("idempotency_key"))
                 summary = _str(action.get("summary"))
-                if key and summary:
-                    summaries[key] = summary
-        if record.task and summaries:
-            self._tasks[record.task] = summaries
-            self._tasks.move_to_end(record.task)
-            while len(self._tasks) > TASK_CACHE_SIZE:
-                self._tasks.popitem(last=False)
+                if key and summary and not self.store.is_known(key):
+                    self.store.remember_task_summary(key, summary)
 
     def _request_for(self, record: LogRecord) -> JudgeRequest:
         payload = record.payload
         action_key = record.action_key or ""
         action_class = _str(payload.get("class"))
-        task_summary = None
-        if record.task and record.task in self._tasks:
-            task_summary = self._tasks[record.task].get(action_key)
+        task_summary = self.store.task_summary(action_key) if action_key else None
         return JudgeRequest(
             action_key=action_key,
             action_class=action_class,
@@ -303,10 +310,20 @@ class Worker:
 
     def _deliver(self, request: JudgeRequest, outcome: JudgeOutcome) -> None:
         verdict = outcome.verdict
+        requested_ts = request.requested_ts
+        action_class = request.action_class
+        summary = request.summary[:SUMMARY_CHARS] if request.summary else None
         if verdict is None:
             self.store.settle(
                 request.action_key,
-                JudgedEntry(status="absent", seq=request.seq, reason=outcome.absent_reason),
+                JudgedEntry(
+                    status="absent",
+                    seq=request.seq,
+                    reason=outcome.absent_reason,
+                    requested_ts=requested_ts,
+                    action_class=action_class,
+                    summary=summary,
+                ),
             )
             return
         sent = self.notifier.send(format_advisory(verdict, outcome.trace_url, request.action_class))
@@ -318,6 +335,9 @@ class Worker:
                 decision=verdict.decision.value,
                 call_id=outcome.call_id,
                 trace_url=outcome.trace_url,
+                requested_ts=requested_ts,
+                action_class=action_class,
+                summary=summary,
             ),
         )
 

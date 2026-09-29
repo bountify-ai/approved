@@ -238,3 +238,14 @@ class BlockingReviewer:
         self.calls += 1
         self.release.wait(5)
         raise InferenceError("released after the deadline")
+
+
+class CallIdTracer:
+    """Stands in for Weave: each reviewer call gets a deterministic call id."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def run(self, reviewer: Any, request: JudgeRequest) -> tuple[Verdict, str | None]:
+        self.count += 1
+        return reviewer.review(request), f"call-{request.action_key}"

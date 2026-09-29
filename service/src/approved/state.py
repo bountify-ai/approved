@@ -29,7 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 __all__ = [
     "HASH_PATTERN",
+    "MAX_FEEDBACK_ATTEMPTS",
     "MAX_LEDGER_ENTRIES",
+    "MAX_TASK_CONTEXT",
     "ChainBreak",
     "Cursor",
     "DecisionRecord",
@@ -40,6 +42,13 @@ __all__ = [
 ]
 
 HASH_PATTERN = r"^[0-9a-f]{64}$"
+
+#: Task summaries held for requests not yet closed (agent text, capped per entry).
+MAX_TASK_CONTEXT = 1_000
+TASK_SUMMARY_CHARS = 1_000
+
+#: Feedback delivery attempts per decision before it is left as ``failed`` for good.
+MAX_FEEDBACK_ATTEMPTS = 3
 
 #: Ledger entries kept per map. The follow cursor only moves forward and stale requests are
 #: never judged, so an evicted key cannot come back to be judged twice.
@@ -89,16 +98,30 @@ class JudgedEntry(_Model):
     reason: str | None = None
     call_id: str | None = None
     trace_url: str | None = None
+    #: Request context, kept so feedback can compute latency and evaluation can replay it.
+    requested_ts: str | None = None
+    action_class: str | None = None
+    summary: str | None = None
+
+
+FeedbackStatus = Literal["pending", "sent", "failed", "not-applicable"]
 
 
 class DecisionRecord(_Model):
-    """The human's (or the TTL sweep's) terminal answer, awaiting Weave feedback (unit 2)."""
+    """The human's (or the TTL sweep's) terminal answer, and its Weave feedback status.
+
+    ``pending`` means the judge produced a traced verdict (a Weave call id) for this
+    action_key and the feedback has not been delivered yet. ``not-applicable`` means there is
+    no call to attach feedback to (not judged, judged offline, or no verdict).
+    """
 
     event: str
     actor: str
     seq: int
     ts: str
-    feedback: Literal["pending", "sent", "failed", "not-applicable"] = "pending"
+    feedback: FeedbackStatus = "pending"
+    feedback_attempts: int = 0
+    feedback_error: str | None = None
 
 
 class ChainBreak(_Model):
@@ -113,6 +136,8 @@ class JudgeState(_Model):
     cursor: Cursor = Field(default_factory=Cursor)
     judged: dict[str, JudgedEntry] = Field(default_factory=dict)
     decisions: dict[str, DecisionRecord] = Field(default_factory=dict)
+    #: action_key -> the task summary its ``task.registered`` gave, until the request closes.
+    task_context: dict[str, str] = Field(default_factory=dict)
     chain_break: ChainBreak | None = None
 
 
@@ -170,13 +195,41 @@ class StateStore:
         self.save()
 
     def record_decision(self, action_key: str, decision: DecisionRecord) -> bool:
-        """Remember a terminal decision once. False if this action_key already has one."""
+        """Remember a terminal decision once and close its task context.
+
+        False if this action_key already has one. Feedback is ``pending`` only when there is a
+        Weave call to attach it to.
+        """
+        self.state.task_context.pop(action_key, None)
         if action_key in self.state.decisions:
             return False
-        if action_key not in self.state.judged:
-            decision = decision.model_copy(update={"feedback": "not-applicable"})
-        self.state.decisions[action_key] = decision
+        judged = self.state.judged.get(action_key)
+        status = "pending" if judged is not None and judged.call_id else "not-applicable"
+        self.state.decisions[action_key] = decision.model_copy(update={"feedback": status})
         return True
+
+    def remember_task_summary(self, action_key: str, summary: str) -> None:
+        """Hold a task summary until the request closes. Persisted with the next save."""
+        self.state.task_context.pop(action_key, None)
+        self.state.task_context[action_key] = summary[:TASK_SUMMARY_CHARS]
+
+    def task_summary(self, action_key: str) -> str | None:
+        return self.state.task_context.get(action_key)
+
+    def pending_feedback(self, max_attempts: int = MAX_FEEDBACK_ATTEMPTS) -> list[str]:
+        return [
+            key
+            for key, d in self.state.decisions.items()
+            if d.feedback in ("pending", "failed") and d.feedback_attempts < max_attempts
+        ]
+
+    def mark_feedback(self, action_key: str, status: FeedbackStatus, error: str | None = None):
+        current = self.state.decisions[action_key]
+        attempts = current.feedback_attempts + (0 if status == "not-applicable" else 1)
+        self.state.decisions[action_key] = current.model_copy(
+            update={"feedback": status, "feedback_attempts": attempts, "feedback_error": error}
+        )
+        self.save()
 
     def advance(self, cursor: Cursor) -> None:
         self.state.cursor = cursor
@@ -193,6 +246,7 @@ class StateStore:
     def save(self) -> None:
         _trim(self.state.judged, self.max_entries)  # type: ignore[arg-type]
         _trim(self.state.decisions, self.max_entries)  # type: ignore[arg-type]
+        _trim(self.state.task_context, MAX_TASK_CONTEXT)  # type: ignore[arg-type]
         self.dir.mkdir(parents=True, exist_ok=True)
         data = self.state.model_dump_json(indent=1).encode("utf-8")
         fd, tmp_name = tempfile.mkstemp(prefix=f".{STATE_FILENAME}.", suffix=".tmp", dir=self.dir)

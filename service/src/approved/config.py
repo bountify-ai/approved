@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
@@ -25,7 +25,9 @@ __all__ = [
     "AGENT_CREDENTIAL_ENV_NAMES",
     "DEFAULT_INFERENCE_BASE_URL",
     "ConfigError",
+    "InferenceSettings",
     "Settings",
+    "load_inference_settings",
     "load_settings",
 ]
 
@@ -42,6 +44,8 @@ AGENT_CREDENTIAL_ENV_NAMES: tuple[str, ...] = (
     "APPROVAL_AGENT_TOKEN",
 )
 
+_M = TypeVar("_M", bound=BaseModel)
+
 PositiveFloat = Annotated[float, Field(gt=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 
@@ -50,17 +54,10 @@ class ConfigError(ValueError):
     """A setting is missing or malformed. The message names variables, never values."""
 
 
-class Settings(BaseModel):
-    """Frozen runtime configuration for the judge worker."""
+class InferenceSettings(BaseModel):
+    """What the reviewer and Weave need. Enough on its own for ``approved evaluate``."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-    facade_url: str
-    tenant_token: SecretStr
-
-    tg_bot_token: SecretStr | None = None
-    tg_chat_id: str | None = None
-    tg_api_base: str = "https://api.telegram.org"
 
     wandb_entity: str = DEFAULT_WANDB_ENTITY
     wandb_project: str = DEFAULT_WANDB_PROJECT
@@ -70,21 +67,8 @@ class Settings(BaseModel):
     inference_api_key: SecretStr | None = None
     reviewer_model: str | None = None
 
-    state_dir: Path = Path("state")
-    policy_file: Path | None = None
-
     offline: bool = False
     judge_timeout_s: PositiveFloat = 25.0
-    judge_max_age_s: PositiveFloat = 900.0
-    poll_interval_s: PositiveFloat = 5.0
-    follow_limit: Annotated[int, Field(gt=0, le=1000)] = 200
-    http_timeout_s: PositiveFloat = 10.0
-    breaker_threshold: PositiveInt = 3
-    breaker_cooldown_s: PositiveFloat = 60.0
-
-    @property
-    def telegram_enabled(self) -> bool:
-        return self.tg_bot_token is not None and bool(self.tg_chat_id)
 
     @property
     def weave_project(self) -> str:
@@ -98,6 +82,32 @@ class Settings(BaseModel):
         if not call_id:
             return None
         return f"https://wandb.ai/{self.wandb_entity}/{self.wandb_project}/r/call/{call_id}"
+
+
+class Settings(InferenceSettings):
+    """Frozen runtime configuration for the judge worker."""
+
+    facade_url: str
+    tenant_token: SecretStr
+
+    tg_bot_token: SecretStr | None = None
+    tg_chat_id: str | None = None
+    tg_api_base: str = "https://api.telegram.org"
+
+    state_dir: Path = Path("state")
+    policy_file: Path | None = None
+
+    judge_max_age_s: PositiveFloat = 900.0
+    poll_interval_s: PositiveFloat = 5.0
+    follow_limit: Annotated[int, Field(gt=0, le=1000)] = 200
+    http_timeout_s: PositiveFloat = 10.0
+    breaker_threshold: PositiveInt = 3
+    breaker_cooldown_s: PositiveFloat = 60.0
+    feedback_timeout_s: PositiveFloat = 15.0
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return self.tg_bot_token is not None and bool(self.tg_chat_id)
 
 
 def _clean(value: str | None) -> str | None:
@@ -136,31 +146,18 @@ def _number(env: Mapping[str, str], name: str) -> str | None:
     return _clean(env.get(name))
 
 
-def load_settings(env: Mapping[str, str] | None = None) -> Settings:
-    """Build :class:`Settings` from ``env`` (default: the process environment)."""
-    environ: Mapping[str, str] = os.environ if env is None else env
-
-    present_agent = [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(n))]
-    present_agent += [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(f"{n}_FILE"))]
-    if present_agent:
+def _refuse_agent_credential(environ: Mapping[str, str]) -> None:
+    present = [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(n))]
+    present += [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(f"{n}_FILE"))]
+    if present:
         raise ConfigError(
             "the judge's environment carries an agent credential "
-            f"({', '.join(sorted(set(present_agent)))}); the judge holds the TENANT credential "
+            f"({', '.join(sorted(set(present)))}); the judge holds the TENANT credential "
             "only. Remove it from this process's environment."
         )
 
-    facade_url = _clean(environ.get("FACADE_URL"))
-    if facade_url is None:
-        raise ConfigError("FACADE_URL is required")
-    if not facade_url.startswith(("https://", "http://")):
-        raise ConfigError("FACADE_URL must be an http(s) URL")
 
-    tenant_token = _secret(environ, "TENANT_TOKEN")
-    if tenant_token is None:
-        raise ConfigError("TENANT_TOKEN_FILE (preferred) or TENANT_TOKEN is required")
-
-    offline = _bool(environ, "OFFLINE")
-
+def _inference_fields(environ: Mapping[str, str], *, offline: bool) -> dict[str, object]:
     wandb_entity = _clean(environ.get("WANDB_ENTITY")) or DEFAULT_WANDB_ENTITY
     wandb_project = _clean(environ.get("WANDB_PROJECT")) or DEFAULT_WANDB_PROJECT
     if "/" in wandb_project:  # accept the combined "entity/project" spelling
@@ -180,40 +177,84 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                 "INFERENCE_API_KEY or WANDB_API_KEY (or their _FILE forms) is required "
                 "unless OFFLINE=1"
             )
-
-    policy_file = _clean(environ.get("POLICY_FILE"))
     raw: dict[str, object] = {
-        "facade_url": facade_url.rstrip("/"),
-        "tenant_token": tenant_token,
-        "tg_bot_token": _secret(environ, "TG_BOT_TOKEN"),
-        "tg_chat_id": _clean(environ.get("TG_CHAT_ID")),
         "wandb_entity": wandb_entity,
         "wandb_project": wandb_project,
         "wandb_api_key": wandb_api_key,
         "inference_api_key": inference_api_key,
         "reviewer_model": reviewer_model,
-        "policy_file": Path(policy_file) if policy_file else None,
         "offline": offline,
     }
-    optional = {
-        "tg_api_base": "TG_API_BASE",
-        "inference_base_url": "INFERENCE_BASE_URL",
-        "state_dir": "STATE_DIR",
-        "judge_timeout_s": "JUDGE_TIMEOUT_S",
-        "judge_max_age_s": "JUDGE_MAX_AGE_S",
-        "poll_interval_s": "POLL_INTERVAL_S",
-        "follow_limit": "FOLLOW_LIMIT",
-        "http_timeout_s": "HTTP_TIMEOUT_S",
-        "breaker_threshold": "BREAKER_THRESHOLD",
-        "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
-    }
-    for field_name, env_name in optional.items():
+    _optional(environ, raw, {"inference_base_url": "INFERENCE_BASE_URL"})
+    _optional(environ, raw, {"judge_timeout_s": "JUDGE_TIMEOUT_S"})
+    return raw
+
+
+def _optional(environ: Mapping[str, str], raw: dict[str, object], names: dict[str, str]) -> None:
+    for field_name, env_name in names.items():
         value = _number(environ, env_name)
         if value is not None:
             raw[field_name] = value
+
+
+def _validate(model: type[_M], raw: dict[str, object]) -> _M:
     try:
-        return Settings.model_validate(raw)
+        return model.model_validate(raw)
     except ValidationError as exc:
         # pydantic's message can echo input values; name the fields only.
         fields = sorted({str(err["loc"][0]) for err in exc.errors() if err["loc"]})
         raise ConfigError(f"invalid settings: {', '.join(fields) or 'unknown field'}") from None
+
+
+def load_inference_settings(
+    env: Mapping[str, str] | None = None, *, offline: bool | None = None
+) -> InferenceSettings:
+    """Reviewer and Weave settings only (``approved evaluate``). ``offline`` overrides OFFLINE."""
+    environ: Mapping[str, str] = os.environ if env is None else env
+    _refuse_agent_credential(environ)
+    is_offline = _bool(environ, "OFFLINE") if offline is None else offline
+    return _validate(InferenceSettings, _inference_fields(environ, offline=is_offline))
+
+
+def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+    """Build worker :class:`Settings` from ``env`` (default: the process environment)."""
+    environ: Mapping[str, str] = os.environ if env is None else env
+    _refuse_agent_credential(environ)
+
+    facade_url = _clean(environ.get("FACADE_URL"))
+    if facade_url is None:
+        raise ConfigError("FACADE_URL is required")
+    if not facade_url.startswith(("https://", "http://")):
+        raise ConfigError("FACADE_URL must be an http(s) URL")
+
+    tenant_token = _secret(environ, "TENANT_TOKEN")
+    if tenant_token is None:
+        raise ConfigError("TENANT_TOKEN_FILE (preferred) or TENANT_TOKEN is required")
+
+    raw = _inference_fields(environ, offline=_bool(environ, "OFFLINE"))
+    policy_file = _clean(environ.get("POLICY_FILE"))
+    raw.update(
+        {
+            "facade_url": facade_url.rstrip("/"),
+            "tenant_token": tenant_token,
+            "tg_bot_token": _secret(environ, "TG_BOT_TOKEN"),
+            "tg_chat_id": _clean(environ.get("TG_CHAT_ID")),
+            "policy_file": Path(policy_file) if policy_file else None,
+        }
+    )
+    _optional(
+        environ,
+        raw,
+        {
+            "tg_api_base": "TG_API_BASE",
+            "state_dir": "STATE_DIR",
+            "judge_max_age_s": "JUDGE_MAX_AGE_S",
+            "poll_interval_s": "POLL_INTERVAL_S",
+            "follow_limit": "FOLLOW_LIMIT",
+            "http_timeout_s": "HTTP_TIMEOUT_S",
+            "breaker_threshold": "BREAKER_THRESHOLD",
+            "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
+            "feedback_timeout_s": "FEEDBACK_TIMEOUT_S",
+        },
+    )
+    return _validate(Settings, raw)
