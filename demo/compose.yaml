@@ -76,9 +76,12 @@ services:
     image: approved-demo-service:local
     build:
       context: ../service
-    command: ["worker"]
+    # The worker and the operator console in one process.
+    command: ["serve"]
     env_file: .state/judge.env
     environment:
+      APPROVED_DEMO: "1"
+      CONSOLE_PORT: "8000"
       FACADE_URL: http://daemon:8080
       TG_API_BASE: http://fake-telegram:8081
       TG_CHAT_ID: "4242"
@@ -93,9 +96,16 @@ services:
       REVIEWER_MODEL: ${REVIEWER_MODEL:-}
     volumes:
       - judge-state:/state
+    ports:
+      - "127.0.0.1:${DEMO_CONSOLE_PORT:-8091}:8000"
     depends_on:
       daemon:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   agent:
     image: python:3.11-slim

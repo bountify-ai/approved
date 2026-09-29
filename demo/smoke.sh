@@ -16,6 +16,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project=approved-demo
 tg_port="${DEMO_TG_PORT:-8090}"
+console_port="${DEMO_CONSOLE_PORT:-8091}"
 facade_port="${DEMO_FACADE_PORT:-8088}"
 compose=(docker compose --project-directory "$here" -f "$here/compose.yaml" -p "$project")
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/approved-smoke.XXXXXX")"
@@ -167,6 +168,25 @@ decisions="$(val decisions_in_state)"
 [ "${decisions% *}" = "${decisions#* }" ] && [ "${decisions% *}" -ge 3 ] && ok "all ${decisions% *} human decisions reached the judge's state" || no "decisions in state: ${decisions}"
 [ "$(val feedback)" = '["not-applicable"]' ] && ok "feedback recorded as not-applicable (offline: no Weave call)" || no "feedback states: $(val feedback)"
 [ "$(val granted)" = "1" ] && ok "exactly one grant (the branch push)" || no "grants: $(val granted)"
+
+say "operator console"
+console="http://127.0.0.1:${console_port}"
+jar="$scratch/cookies"
+code="$(curl -s -o /dev/null -w '%{http_code}' "$console/")"
+[ "$code" = "303" ] && ok "console / redirects to /login without a session" || no "console / without a session: HTTP ${code}"
+curl -fsS -c "$jar" "$console/login" >"$scratch/login.html"
+csrf="$(sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' "$scratch/login.html" | head -1)"
+# The token goes to curl from its 0600 file, never on the command line.
+code="$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" -c "$jar" \
+  --data-urlencode "token@$here/.state/console_token" --data-urlencode "csrf=${csrf}" "$console/login")"
+curl -fsS -b "$jar" "$console/" >"$scratch/console.html" || true
+if [ "$code" = "303" ] && grep -q "Live tenant view" "$scratch/console.html" \
+  && grep -q 'chip agree' "$scratch/console.html" && grep -q 'chip escalated' "$scratch/console.html"; then
+  ok "console / with the demo console token shows the live view, with agree and escalated labels"
+else
+  no "console live view (login HTTP ${code})"
+fi
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$console/policy")" = "200" ] && ok "console /policy is public" || no "console /policy"
 
 say "log integrity"
 verify="$("${compose[@]}" exec -T -w /data/demo daemon sh -c 'node "$APPROVAL_CLI" log verify --json' || true)"

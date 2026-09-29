@@ -78,6 +78,40 @@ def _noop() -> None:
     return None
 
 
+class FollowStatus:
+    """What the worker knows about its follow, for the console. Thread-safe snapshots.
+
+    Updated by the worker thread on every step; read by the web thread. The console never
+    calls the facade itself: this and the state file are all it shows.
+    """
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._lock = threading.Lock()
+        self._clock = clock
+        self._data: dict[str, Any] = {
+            "running": False,
+            "started_at": None,
+            "last_follow_at": None,
+            "last_follow_ok": None,
+            "last_error": None,
+            "chain": "unknown",
+            "head_seq": 0,
+            "caught_up": False,
+            "pages": 0,
+        }
+
+    def update(self, **fields: Any) -> None:
+        with self._lock:
+            self._data.update(fields)
+
+    def followed(self, *, ok: bool, error: str | None = None, **fields: Any) -> None:
+        self.update(last_follow_at=self._clock(), last_follow_ok=ok, last_error=error, **fields)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._data)
+
+
 @dataclass(frozen=True)
 class StepResult:
     caught_up: bool
@@ -148,6 +182,8 @@ class Worker:
         self.on_idle = on_idle
         self._clock = clock
         self._stop = threading.Event()
+        self.status = FollowStatus(clock)
+        self.status.update(head_seq=store.state.cursor.seq)
         self._failures = 0
 
     # ------------------------------------------------------------------ control
@@ -164,6 +200,7 @@ class Worker:
         """Loop until stopped (or, with ``once``, until caught up). Returns an exit code."""
         brk = self.store.state.chain_break
         if brk is not None:
+            self.status.update(chain="chain-break", last_error=f"chain-break at seq {brk.at_seq}")
             log(
                 "chain-break",
                 level="error",
@@ -174,6 +211,13 @@ class Worker:
             )
             return EXIT_CHAIN_BREAK
         log("worker.start", cursor_seq=self.store.state.cursor.seq, once=once)
+        self.status.update(running=True, started_at=self._clock())
+        try:
+            return self._loop(once=once)
+        finally:
+            self.status.update(running=False)
+
+    def _loop(self, *, once: bool) -> int:
         self._idle()
         while not self._stop.is_set():
             result = self.step()
@@ -211,15 +255,20 @@ class Worker:
         try:
             page = self.facade.follow_page(cursor, self.follow_limit)
         except ChainBreakError as brk:
+            self.status.followed(
+                ok=False, error=f"chain-break at seq {brk.at_seq}", chain="chain-break"
+            )
             self._chain_break(brk)
             return StepResult(caught_up=False, records=0, chain_break=True)
         except CredentialError as exc:
             METRICS.incr("follow.credential_refused")
             log("follow.credential-refused", level="error", status=exc.status, code=exc.code)
+            self.status.followed(ok=False, error=f"credential refused (HTTP {exc.status})")
             return StepResult(caught_up=False, records=0, error="credential")
         except FollowError as exc:
             METRICS.incr("follow.error")
             log("follow.error", level="warning", error=str(exc), cursor_seq=cursor.seq)
+            self.status.followed(ok=False, error=str(exc))
             return StepResult(caught_up=False, records=0, error="follow")
 
         decided_later = {
@@ -237,6 +286,13 @@ class Worker:
             self.store.state.cursor = Cursor(seq=record.seq, hash=record.hash)
         self.store.advance(page.cursor)
         METRICS.incr("follow.pages")
+        self.status.followed(
+            ok=True,
+            chain="verified",
+            head_seq=page.cursor.seq,
+            caught_up=page.caught_up,
+            pages=self.status.snapshot()["pages"] + 1,
+        )
         return StepResult(caught_up=page.caught_up, records=len(page.records))
 
     # ------------------------------------------------------------------ records

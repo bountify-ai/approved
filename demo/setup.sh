@@ -16,6 +16,7 @@ tenant_token="$(rand 24)"
 webhook_secret="$(rand 24)"
 gate_bot="7001:$(rand 18)"   # the approval gate's bot
 judge_bot="7002:$(rand 18)"  # the judge's own bot, posting into the same approver chat
+console_token="$(rand 24)"   # the operator console's sign-in token
 
 # The daemon holds both serve credentials (it checks each caller against them), its bot
 # token and the webhook secret.
@@ -29,6 +30,7 @@ EOF
 cat >"$state/judge.env" <<EOF
 TENANT_TOKEN=${tenant_token}
 TG_BOT_TOKEN=${judge_bot}
+CONSOLE_TOKEN=${console_token}
 EOF
 # The agent holds the AGENT credential only.
 cat >"$state/agent.env" <<EOF
@@ -36,5 +38,7 @@ AGENT_TOKEN=${agent_token}
 EOF
 # For demo/smoke.sh only: the tenant credential, to read the facade the way the judge does.
 printf '%s' "$tenant_token" >"$state/tenant_token"
+# The console sign-in token: paste it at the console's /login (never shown by the console).
+printf '%s\n' "$console_token" >"$state/console_token"
 chmod 600 "$state"/*
 echo "demo: fresh credentials written to demo/.state/ (mode 0600)"
