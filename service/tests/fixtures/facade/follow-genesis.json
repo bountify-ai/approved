@@ -1,0 +1,69 @@
+{
+  "http_status": 200,
+  "body": {
+    "records": [
+      {
+        "actor": "human:fixture",
+        "alg": "sha256/jcs",
+        "event": "policy.updated",
+        "hash": "891b57c364b00f0a1252d2d875cca36a904d14d8665540884445d31e9c3b71e6",
+        "payload": {
+          "payload_hash": "2695c0da3f65393c4ba71bbb07b1be240d6dc30e04dbfebb84ad09b73e2f4f4a",
+          "policy_path": "APPROVAL.md",
+          "sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737"
+        },
+        "prev": null,
+        "seq": 1,
+        "ts": "2026-09-25T08:26:27.372Z"
+      },
+      {
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "task.registered",
+        "hash": "9299765f7cb24fb525cbc4ae502ef78f1a827f0196459c48e10efa57b3f75a1e",
+        "payload": {
+          "actions": [
+            {
+              "class": "vcs.push.main",
+              "idempotency_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9:vcs.push.main",
+              "payload_hash": "a736dada7e1254980952d31673ab1c0bd61bd6fd63a56514f9d5a577e5b92c85",
+              "summary": "git push origin main"
+            }
+          ],
+          "state": "proposed"
+        },
+        "prev": "891b57c364b00f0a1252d2d875cca36a904d14d8665540884445d31e9c3b71e6",
+        "seq": 2,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9",
+        "ts": "2026-09-25T08:26:27.697Z"
+      },
+      {
+        "action_key": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9:vcs.push.main",
+        "actor": "agent:hermes-fixture",
+        "alg": "sha256/jcs",
+        "event": "approval.requested",
+        "hash": "c98d660e393a1ecf7954106a5f14aa93a1f1303627f169898e9f3fc4bb38787e",
+        "payload": {
+          "class": "vcs.push.main",
+          "display_hash": "3b73af3a39c5880944bd851e6fbdcb6afc8a5f486eb4a6bc25d55f7fb3debaf6",
+          "est_cost_usd": "0",
+          "execution": "harness",
+          "harness_cap_ms": 65000,
+          "payload_hash": "a736dada7e1254980952d31673ab1c0bd61bd6fd63a56514f9d5a577e5b92c85",
+          "policy_sha256": "e2fd3fc16e5b7e3e0f6b73d1943507aeb87db8770b45b225cd3c7f8f839c1737",
+          "summary": "git push origin main"
+        },
+        "prev": "9299765f7cb24fb525cbc4ae502ef78f1a827f0196459c48e10efa57b3f75a1e",
+        "seq": 3,
+        "task": "hook:MONITORFIXTUREMARKER7f3c9e1d-baseline:6175bac70dbf92c9",
+        "ts": "2026-09-25T08:26:27.763Z"
+      }
+    ],
+    "cursor": {
+      "seq": 3,
+      "hash": "c98d660e393a1ecf7954106a5f14aa93a1f1303627f169898e9f3fc4bb38787e"
+    },
+    "caught_up": true,
+    "exit_code": 0
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "regenerate": "scripts/capture-monitor-fixture.sh",
+  "image": "approval-md-hosted-daemon:smoke",
+  "runtime_commit": "6b74ca72541917511b77650702f702b079002957",
+  "platform": "linux/amd64",
+  "captured_at": "2026-09-25T08:26:57.366Z",
+  "marker": "MONITORFIXTUREMARKER7f3c9e1d",
+  "note": "Real facade answers from a throwaway container. Every record was appended by the runtime (policy attest, POST /hook/hermes, the daemon TTL sweep). Nothing here was written by hand."
+}
