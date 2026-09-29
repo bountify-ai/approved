@@ -100,7 +100,10 @@ class Settings(InferenceSettings):
     judge_max_age_s: PositiveFloat = 900.0
     poll_interval_s: PositiveFloat = 5.0
     follow_limit: Annotated[int, Field(gt=0, le=1000)] = 200
-    http_timeout_s: PositiveFloat = 10.0
+    #: Must exceed the facade's hook wait (APPROVAL_SERVE_HOOK_TIMEOUT, 12 s recommended):
+    #: `approval serve` answers one call at a time, so a follow can queue behind a hook call
+    #: that is waiting for a human, and it should be answered when that wait ends.
+    http_timeout_s: PositiveFloat = 20.0
     breaker_threshold: PositiveInt = 3
     breaker_cooldown_s: PositiveFloat = 60.0
     feedback_timeout_s: PositiveFloat = 15.0

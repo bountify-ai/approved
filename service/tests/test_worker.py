@@ -333,3 +333,23 @@ def test_task_context_survives_restart_and_is_pruned_on_close(
     facade.append(decision_event("k1"))
     restarted.run(once=True)
     assert restarted.store.state.task_context == {}
+
+
+def test_follow_failures_retry_quickly_before_backing_off(make_worker, facade) -> None:
+    """The facade is briefly unavailable while a hook call holds it; the judge keeps asking at
+    the poll interval for a few failures before its backoff grows."""
+    facade.script = [httpx.Response(503) for _ in range(8)]
+    worker = make_worker(ScriptedReviewer([verdict()]))
+    delays: list[float] = []
+
+    def record(delay: float | None = None) -> bool:
+        delays.append(delay or 0.0)
+        if len(delays) >= 8:
+            worker.stop()
+        return worker.stopping
+
+    worker._stop.wait = record  # type: ignore[method-assign]
+    worker.run()
+    poll = worker.poll_interval_s
+    assert delays[:5] == [poll] * 5
+    assert delays[5:8] == [poll * 2, poll * 4, poll * 8]
