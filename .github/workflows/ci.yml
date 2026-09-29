@@ -35,3 +35,7 @@ jobs:
         run: uv run pyright
       - name: Test
         run: uv run pytest
+      - name: Offline evaluation (no network, Weave disabled)
+        env:
+          WEAVE_DISABLED: "true"
+        run: uv run python -m approved evaluate --offline

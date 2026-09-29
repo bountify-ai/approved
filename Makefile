@@ -1,7 +1,7 @@
 SERVICE := service
 UV := uv --directory $(SERVICE)
 
-.PHONY: setup test lint format typecheck check demo
+.PHONY: setup test lint format typecheck check eval demo
 
 setup:
 	$(UV) sync
@@ -21,6 +21,9 @@ typecheck:
 	$(UV) run pyright
 
 check: lint typecheck test
+
+eval:
+	$(UV) run python -m approved evaluate --offline
 
 demo:
 	@echo "demo: not wired yet (lands in a later unit)"
