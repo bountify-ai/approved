@@ -390,7 +390,7 @@ def test_connect_writes_the_console_bundle(fake: FakeMaritime, tmp_path: Path, c
     "args",
     [
         ["create", "acme-daemon", "--repo", "https://x.test", "--framework", "custom"],
-        ["exec", "--json", "acme-daemon", "--", "sh", "-c", "true"],
+        ["exec", "--verbose-output", "acme-daemon", "--", "sh", "-c", "true"],
         ["env", "import", "acme-daemon", "f.env", "--json"],
         ["stop", "acme-daemon", "--force"],
     ],
@@ -401,3 +401,11 @@ def test_fake_rejects_flags_the_real_cli_lacks(fake: FakeMaritime, args: list[st
     with pytest.raises(MaritimeError) as info:
         Maritime(SecretGuard()).run(args)
     assert info.value.exit_code == 4
+
+
+def test_fake_accepts_json_after_exec_like_the_real_cli(fake: FakeMaritime) -> None:
+    fake.set(agents=[{"id": "i", "name": "acme-daemon"}])
+    result = Maritime(SecretGuard()).run(
+        ["exec", "--json", "acme-daemon", "--", "sh", "-c", "true"]
+    )
+    assert result["exit_code"] == 0

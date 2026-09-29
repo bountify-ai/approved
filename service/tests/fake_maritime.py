@@ -81,6 +81,12 @@ if key not in OPTIONS:
 rest = argv[2:] if key == "env import" else argv[1:]
 if key == "exec":
     rest = rest[: rest.index("--")] if "--" in rest else rest
+    # `--json` after `exec` is accepted by the real CLI although exec's own --help does not
+    # list it (a global option, parsed anywhere): Carter ran `maritime exec --json <agent> --
+    # sh -c ...` against maritime-cli 1.7.0 on 2026-09-29 and got JSON back, and
+    # approval-md-hosted's scripts/gate-placement/maritime-exec-adapter.mjs has used
+    # `exec --json MACHINE -- argv` since its PR #17. The printed attest command uses it.
+    rest = [t for t in rest if t != "--json"]
 in_env_pairs = False
 for token in rest:
     if token.startswith("-"):
