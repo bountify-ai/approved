@@ -106,10 +106,13 @@ def ask(
     job: str | None = None,
     wait_s: float = 280.0,
     poll_s: float = 5.0,
+    allow_target: str | None = None,
     out: Callable[[str], None] = print,
     sleep: Callable[[float], None] = time.sleep,
 ) -> AskOutcome:
-    resolve_target(maritime, agent)
+    if allow_target is not None:
+        out(f"warning: --allow-target lets this read-only ask reach {allow_target!r} only")
+    resolve_target(maritime, agent, allow=allow_target)
     agent = agent.strip()
     if job is None:
         if not prompt or len(prompt) > MAX_PROMPT:

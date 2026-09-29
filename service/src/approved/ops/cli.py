@@ -69,9 +69,21 @@ def add_subcommands(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     a.add_argument("prompt", nargs="?")
     a.add_argument("--job", default=None, help="collect an earlier detached call")
     a.add_argument("--wait-s", type=float, default=280.0)
+    a.add_argument(
+        "--allow-target",
+        default=None,
+        metavar="EXACT_NAME",
+        help="permit this one protected machine (exact, case-sensitive resolved name); read-only",
+    )
 
     s = sub.add_parser("status", help="machine state, public health and log verify")
     s.add_argument("tenant")
+    s.add_argument(
+        "--allow-target",
+        default=None,
+        metavar="EXACT_NAME",
+        help="the daemon machine's exact name, when it is a protected one (read-only)",
+    )
 
 
 def _guard(credentials_root: Path, tenant: str | None) -> SecretGuard:
@@ -147,6 +159,7 @@ def run(args: argparse.Namespace) -> int:
                 args.prompt,
                 job=args.job,
                 wait_s=args.wait_s,
+                allow_target=args.allow_target,
             )
             return {
                 "allowed": EXIT_OK,
@@ -154,7 +167,11 @@ def run(args: argparse.Namespace) -> int:
                 "timeout": EXIT_TIMEOUT,
             }.get(outcome.kind, EXIT_FAILED)
         if args.command == "status":
-            status(Maritime(_guard(Path(".approved"), args.tenant)), args.tenant)
+            status(
+                Maritime(_guard(Path(".approved"), args.tenant)),
+                args.tenant,
+                allow_target=args.allow_target,
+            )
             return EXIT_OK
     except (ProtectedName, BundleError, ValueError, CredentialError) as exc:
         print(f"refused: {exc}")

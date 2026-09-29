@@ -120,6 +120,8 @@ approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>
   an unauthenticated `/status` 401, writes the policy and verifies its sha256 on the machine,
   then prints the attest command. **It never attests: a human does.**
 - It refuses the dogfood tenant and the `approval-hermes*` and `approval-x16-*` machines.
+  The read-only `ask` and `status` accept `--allow-target <exact-name>` to reach one protected
+  machine by its exact resolved name (with a warning); `provision` never does.
 - `ask` runs detached inside the machine (the `maritime exec` limit is 120 s), polls, and on a
   timeout prints a `--job` id to collect the answer later.
 

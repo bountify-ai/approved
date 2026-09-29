@@ -604,3 +604,118 @@ def test_replace_checks_the_queue_and_writes_in_one_exec(
         "queue --json" in json.dumps(a) and "base64 -d" not in json.dumps(a)
         for a in fake.argvs("exec")
     )  # no separate check-then-write pair
+
+
+# ------------------------------------------------------------------ --allow-target (read-only)
+
+
+def test_allow_target_permits_exactly_the_named_protected_machine(
+    fake: FakeMaritime, capsys
+) -> None:
+    fake.set(agents=[{"id": "g1", "name": "approval-hermes-gated"}], ask="allowed")
+    code = main(
+        [
+            "ask",
+            "--allow-target",
+            "approval-hermes-gated",
+            "approval-hermes-gated",
+            "hi",
+            "--wait-s",
+            "0",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "warning: --allow-target" in out
+    assert fake.argvs("exec")  # it ran
+
+
+@pytest.mark.parametrize(
+    ("allow", "target"),
+    [
+        ("approval-hermes-gated", "approval-hermes"),  # a different protected machine
+        ("Approval-Hermes-Gated", "approval-hermes-gated"),  # case-sensitive
+    ],
+)
+def test_allow_target_mismatches_are_refused(fake: FakeMaritime, allow: str, target: str) -> None:
+    fake.set(
+        agents=[
+            {"id": "g1", "name": "approval-hermes-gated"},
+            {"id": "h1", "name": "approval-hermes"},
+        ]
+    )
+    assert main(["ask", "--allow-target", allow, target, "hi", "--wait-s", "0"]) == 2
+    assert fake.argvs("exec") == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"result": {"agent": {"name": "approval-x16-hermes", "id": "g1"}}},
+        {"name": "approval-hermes-gated", "result": {"agent": {"name": "approval-dogfood"}}},
+        {"result": {"status": "running"}},
+    ],
+)
+def test_allow_target_nested_or_resolved_mismatch_is_refused(
+    fake: FakeMaritime, answer: dict
+) -> None:
+    fake.set(
+        agents=[{"id": "g1", "name": "approval-hermes-gated"}],
+        status_override={"approval-hermes-gated": answer},
+    )
+    code = main(
+        [
+            "ask",
+            "--allow-target",
+            "approval-hermes-gated",
+            "approval-hermes-gated",
+            "hi",
+            "--wait-s",
+            "0",
+        ]
+    )
+    assert code == 2
+    assert fake.argvs("exec") == []
+
+
+def test_status_allow_target_reads_the_named_daemon(fake: FakeMaritime, capsys) -> None:
+    from approved.ops.status import status
+
+    fake.set(agents=[{"id": "d1", "name": "approval-dogfood"}])
+    assert main(["status", "dogfood"]) == 2  # still refused without the flag
+    lines: list[str] = []
+    report = status(
+        Maritime(SecretGuard()),
+        "dogfood",
+        http=_http(),
+        out=lines.append,
+        allow_target="approval-dogfood",
+    )
+    assert report["machine"] == "running"
+    assert lines[0].startswith("warning: --allow-target")
+    fake.set(status_override={"approval-dogfood": {"name": "approval-x16-daemon-3"}})
+    with pytest.raises(ProtectedName):  # resolves to a different protected machine
+        status(
+            Maritime(SecretGuard()),
+            "dogfood",
+            http=_http(),
+            out=lines.append,
+            allow_target="approval-dogfood",
+        )
+
+
+def test_provision_does_not_accept_allow_target(fake: FakeMaritime, tmp_path: Path) -> None:
+    (tmp_path / "p.md").write_text("x")
+    with pytest.raises(SystemExit) as info:
+        main(
+            [
+                "provision",
+                "dogfood",
+                "--policy",
+                str(tmp_path / "p.md"),
+                "--allow-target",
+                "approval-dogfood",
+            ]
+        )
+    assert info.value.code == 2
+    assert fake.calls() == []
