@@ -72,7 +72,12 @@ import json, os, sys, time, urllib.request
 
 port, agent_pid, log_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 decide = {"push-main": "r", "push-branch": "g", "force-push": "r"}
+klass = {"push-main": "vcs.push.main", "push-branch": "vcs.push.branch",
+         "force-push": "vcs.history.rewrite"}
 tapped = set()
+tapped_classes = []
+first_seen = {}
+ADVISORY_WAIT_S = 90  # an approver reads the advisory before tapping; bounded
 deadline = time.time() + 240
 log = open(log_path, "w")
 
@@ -99,6 +104,18 @@ while time.time() < deadline and alive(agent_pid):
         scenario = next((s for s in decide if f"-{s}:" in header), None)
         if scenario is None:
             continue
+        # Tap once the judge's advisory for this request is in the chat, as an approver
+        # would. The facade answers one call at a time and is busy while a hook call waits,
+        # so the judge reads a request when that wait ends; tapping first would decide it
+        # unread (recorded as absent:already-decided, which the assertions below would catch).
+        first_seen.setdefault(message["message_id"], time.time())
+        advised = sum(
+            1 for m in messages
+            if "Judge (advisory AI" in m["text"] and m["text"].endswith(klass[scenario])
+        )
+        needed = 1 + sum(1 for t in tapped_classes if t == scenario)
+        if advised < needed and time.time() - first_seen[message["message_id"]] < ADVISORY_WAIT_S:
+            continue
         want = decide[scenario]
         button = next(b for b in message["buttons"] if b["data"].startswith(want + ":"))
         body = json.dumps({"message_id": message["message_id"], "data": button["data"]}).encode()
@@ -109,6 +126,7 @@ while time.time() < deadline and alive(agent_pid):
         with urllib.request.urlopen(req, timeout=15) as r:
             answer = json.load(r)
         tapped.add(message["message_id"])
+        tapped_classes.append(scenario)
         print(f"tap {scenario} -> {'approve' if want == 'g' else 'reject'} {answer}", file=log, flush=True)
     time.sleep(0.5)
 PY

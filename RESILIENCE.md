@@ -38,6 +38,16 @@ to a delay, a retry in the approver's path, or a placeholder.
 | SIGTERM | the in-flight judgement finishes, state is saved, the loop exits 0 | `test_graceful_stop_finishes_the_inflight_judgement` |
 | Corrupt state file, or state from another facade | refuses to start (exit 4) rather than re-judge | `test_corrupt_state_refuses_to_load`, `test_state_for_another_facade_refuses` |
 
+### The judge reads between hook calls
+
+`approval serve` answers one call at a time, and a hook call holds it for the facade's hook
+wait (12 s recommended). The judge's follow queues behind it and is answered when that wait
+ends, so the judge sees a request at the latest one hook wait after it opened. A human who
+decides inside that first wait decides before the judge has read the request; the judge then
+records `absent:already-decided` (visible in the console, never assent) instead of posting a
+late advisory. The demo's smoke taps after the advisory appears, as an approver reading it
+would.
+
 ### Chain break and restarts
 
 A chain break exits `serve` non-zero, so the platform restarts it, and each restart exits again
