@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import Request
@@ -42,6 +44,37 @@ SESSION_MAX_AGE_S = 12 * 3600
 FUTURE_SKEW_S = 60
 
 
+class SessionEpoch:
+    """A counter in ``STATE_DIR/console-epoch`` mixed into every session MAC. Signing out bumps
+    it, which revokes every session at once (there is one shared operator token, so there is
+    no per-user session to revoke)."""
+
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+
+    def get(self) -> int:
+        if self.path is None:
+            return 0
+        try:
+            text = self.path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            return 0
+        return int(text) if text.isdigit() else 0
+
+    def bump(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, str(self.get() + 1).encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, self.path)
+
+
 class ConsoleAuth:
     def __init__(
         self,
@@ -51,7 +84,9 @@ class ConsoleAuth:
         base_path: str = "",
         max_age_s: int = SESSION_MAX_AGE_S,
         clock: Callable[[], float] = time.time,
+        epoch: SessionEpoch | None = None,
     ) -> None:
+        self.epoch = epoch or SessionEpoch(None)
         self._token = token
         self.demo = demo
         self.base_path = base_path
@@ -76,7 +111,7 @@ class ConsoleAuth:
     def _mac(self, issued_at: int) -> str:
         assert self._token is not None
         key = self._token.get_secret_value().encode()
-        message = f"approved-console-session-v2|{issued_at}".encode()
+        message = f"approved-console-session-v3|{self.epoch.get()}|{issued_at}".encode()
         return hmac.new(key, message, hashlib.sha256).hexdigest()
 
     def check_token(self, candidate: str) -> bool:
@@ -89,6 +124,11 @@ class ConsoleAuth:
         and a rotated CONSOLE_TOKEN invalidates every session at once."""
         issued = int(self._clock())
         return f"{issued}.{self._mac(issued)}"
+
+    def revoke_all(self) -> None:
+        """Sign-out: bump the epoch, so every session cookie issued so far stops verifying."""
+        if self._token is not None:
+            self.epoch.bump()
 
     def is_authenticated(self, request: Request) -> bool:
         if self._token is None:

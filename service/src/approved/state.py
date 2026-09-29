@@ -140,6 +140,17 @@ class DecisionRecord(_Model):
     advisory: str = "unknown"
 
 
+class UnverifiableRecord(_Model):
+    seq: int
+    event: str
+    reason: str
+    action_key: str | None = None
+    at: datetime = Field(default_factory=_now)
+
+
+MAX_UNVERIFIABLE = 200
+
+
 class ChainBreak(_Model):
     reason: str
     at_seq: int
@@ -154,6 +165,8 @@ class JudgeState(_Model):
     decisions: dict[str, DecisionRecord] = Field(default_factory=dict)
     #: action_key -> the task summary its ``task.registered`` gave, until the request closes.
     task_context: dict[str, str] = Field(default_factory=dict)
+    #: Records whose links held but whose content did not verify (newest last, capped).
+    unverifiable: list[UnverifiableRecord] = Field(default_factory=list)
     chain_break: ChainBreak | None = None
 
 
@@ -273,6 +286,17 @@ class StateStore:
         self.state.decisions[action_key] = current.model_copy(
             update={"feedback": status, "feedback_attempts": attempts, "feedback_error": error}
         )
+        self.save()
+
+    @_locked
+    def note_unverifiable(self, record: UnverifiableRecord) -> None:
+        self.state.unverifiable.append(record)
+        del self.state.unverifiable[:-MAX_UNVERIFIABLE]
+        if record.action_key and record.event == "approval.requested":
+            self.state.judged.setdefault(
+                record.action_key,
+                JudgedEntry(status="skipped", seq=record.seq, reason="record-unverifiable"),
+            )
         self.save()
 
     @_locked

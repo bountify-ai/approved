@@ -14,7 +14,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .maritime import Maritime
 
-__all__ = ["ProtectedName", "is_protected", "protected_ids", "refuse_protected", "resolve_target"]
+__all__ = [
+    "ProtectedName",
+    "identities",
+    "is_protected",
+    "protected_ids",
+    "refuse_any_protected",
+    "refuse_protected",
+    "resolve_target",
+]
 
 # Matched against the casefolded, stripped name.
 _PROTECTED = (
@@ -52,13 +60,43 @@ def refuse_protected(name: str) -> None:
         )
 
 
+_IDENTITY_KEYS = ("name", "agentName", "agent_name", "id", "agentId", "agent_id")
+
+
+def identities(value: Any, _depth: int = 0) -> list[str]:
+    """Every name or id anywhere in a ``maritime --json`` answer, however nested (``agent``,
+    ``result``, ``created`` lists, ...)."""
+    found: list[str] = []
+    if _depth > 8:
+        return found
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _IDENTITY_KEYS and isinstance(item, str) and item.strip():
+                found.append(item)
+            elif isinstance(item, dict | list):
+                found += identities(item, _depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            found += identities(item, _depth + 1)
+    return found
+
+
+def refuse_any_protected(answer: Any, *, what: str) -> list[str]:
+    """Refuse if ANY name or id in ``answer`` is protected, and fail CLOSED when there is none:
+    a target this CLI cannot identify is a target it will not touch."""
+    found = identities(answer)
+    if not found:
+        raise ProtectedName(f"refusing: maritime's answer for {what} names no agent or id")
+    for value in found:
+        refuse_protected(value)
+    return found
+
+
 def resolve_target(maritime: Maritime, name: str) -> dict[str, Any]:
-    """Resolve ``name`` (a name or an id) through ``maritime --json status`` and refuse if what
-    it RESOLVES to is protected, by name or by id. The typed name is checked first."""
+    """Resolve ``name`` (a name or an id) through ``maritime --json status`` and refuse if
+    anything it resolves to is protected, by name or id, at any depth; or if it resolves to
+    nothing identifiable. The typed name is checked first."""
     refuse_protected(name)
     agent = maritime.status(name.strip())
-    for key in ("name", "agentName", "id", "agentId"):
-        value = agent.get(key)
-        if isinstance(value, str):
-            refuse_protected(value)
+    refuse_any_protected(agent, what=name.strip())
     return agent

@@ -32,10 +32,19 @@ to a delay, a retry in the approver's path, or a placeholder.
 | Facade unreachable or 5xx | logged; the cursor does not move; retried at the poll interval for 5 failures, then with capped exponential backoff. `approval serve` answers one call at a time, so it is briefly unavailable while a hook call holds it; the follow timeout (20 s) exceeds the facade's hook wait so a queued follow is answered when that wait ends | `test_transport_errors_back_off_without_moving_the_cursor`, `test_follow_failures_retry_quickly_before_backing_off` |
 | Credential refused (401/403) | logged as `follow.credential-refused`; retried with backoff | `test_unauthenticated_facade_is_a_credential_error_not_a_crash` |
 | Chain break (a link, a recomputed hash or the cursor does not match) | terminal: persisted, one fixed-text notice to the approver, exit code 3; a restart refuses to follow until an operator investigates; nothing is skipped | `test_chain_break_stops_judging_and_is_surfaced`, `test_broken_links_are_chain_breaks` |
+| A record's links hold but its content does not recompute (or cannot be encoded) | not terminal: the record is marked `record-unverifiable`, never judged, counted and shown in the console; the judge follows past it | `test_content_failures_are_not_terminal`, `test_an_unverifiable_record_is_skipped_surfaced_and_followed_past` |
 | The worker thread ends on its own under `serve` (chain break, or an uncaught error) | `/health` answers 503 `{"status": "degraded", "reason": ...}`; about 3 s later the process exits non-zero (3 for a chain break, 1 otherwise) so the platform restarts it; a chain break stays terminal across restarts through state | `test_chain_break_degrades_and_shuts_down`, `test_a_crashed_worker_degrades_with_a_nonzero_exit`, `test_health_answers_503_when_degraded` |
 | Crash mid-review | the action key was claimed before the reviewer ran, so the restart does not judge it again (at most once) | `test_crash_after_claim_never_rejudges` |
 | SIGTERM | the in-flight judgement finishes, state is saved, the loop exits 0 | `test_graceful_stop_finishes_the_inflight_judgement` |
 | Corrupt state file, or state from another facade | refuses to start (exit 4) rather than re-judge | `test_corrupt_state_refuses_to_load`, `test_state_for_another_facade_refuses` |
+
+### Chain break and restarts
+
+A chain break exits `serve` non-zero, so the platform restarts it, and each restart exits again
+at once because the break is persisted. That restart loop is deliberate: the judge must not
+resume on a log it cannot vouch for. The way out is an operator's: investigate the log (with
+`approval log verify` on the daemon), and only then clear `STATE_DIR` so the judge starts a
+fresh follow.
 
 ## Cursor persistence
 

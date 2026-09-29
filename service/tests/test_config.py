@@ -102,7 +102,16 @@ def test_bundle_agent_credential_names_are_refused(name: str) -> None:
     assert "agent-secret-value-xyz" not in str(info.value)
 
 
-@pytest.mark.parametrize("name", ["HOSTED_ACME_TG_BOT_TOKEN", "APPROVAL_TG_TOKEN"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "HOSTED_ACME_TG_BOT_TOKEN",
+        "HOSTED_ACME_CO_TG_BOT_TOKEN_FILE",
+        "APPROVAL_TG_TOKEN",
+        "TG_BOT_TOKEN",
+        "TG_BOT_TOKEN_FILE",
+    ],
+)
 def test_the_approval_bot_token_is_refused(name: str) -> None:
     with pytest.raises(ConfigError, match="approval bot token"):
         load_settings({**BASE, "OFFLINE": "1", name: "7001:gate-bot-secret"})
@@ -116,7 +125,7 @@ def test_the_approval_bot_token_is_refused(name: str) -> None:
         ("http://10.0.0.5:8080", False, False),
         ("http://localhost:8088", False, True),
         ("http://127.0.0.1:8088", False, True),
-        ("http://daemon:8080", False, True),
+        ("http://daemon:8080", False, False),
         ("http://facade.example.com", True, True),
         ("ftp://x", True, False),
     ],
@@ -128,3 +137,10 @@ def test_facade_url_must_be_https_off_loopback(url: str, demo: bool, ok: bool) -
     else:
         with pytest.raises(ConfigError, match="https"):
             load_settings(env)
+
+
+def test_a_single_label_http_facade_needs_an_explicit_opt_in() -> None:
+    env = {**BASE, "OFFLINE": "1", "FACADE_URL": "http://daemon:8080"}
+    with pytest.raises(ConfigError, match="ALLOW_INSECURE_FACADE"):
+        load_settings(env)
+    assert load_settings({**env, "ALLOW_INSECURE_FACADE": "1"}).facade_url == "http://daemon:8080"

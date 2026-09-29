@@ -106,7 +106,7 @@ def serve() -> int:
     except ConfigError as exc:
         log("config.error", level="error", detail=str(exc))
         return EXIT_CONFIG
-    if settings.console_token is None and not settings.demo_mode:
+    if settings.console_enabled and settings.console_token is None and not settings.demo_mode:
         log(
             "config.error",
             level="error",
@@ -124,7 +124,10 @@ def serve() -> int:
 
     from .console.app import context_from_settings, create_app
 
-    app = create_app(context_from_settings(settings, worker.status.snapshot))
+    app = create_app(
+        context_from_settings(settings, worker.status.snapshot),
+        console=settings.console_enabled,
+    )
     server = uvicorn.Server(
         uvicorn.Config(
             app,

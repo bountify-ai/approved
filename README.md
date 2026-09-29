@@ -159,6 +159,10 @@ approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>
   does the mechanical steps, but a person runs it, and a person attests.
 - **The judge has its own bot.** It never holds the approval bot's token; the approver
   `/start`s a second bot once, and its messages say "advisory AI, not an approval".
+- **The console is not for a shared origin in production.** On Maritime every public agent
+  shares `https://api.maritime.sh`, so any page there is same-origin with the console. Use it
+  there for demos only; in production give it its own domain, or run the judge with
+  `CONSOLE_ENABLED=0`. See [SECURITY.md](SECURITY.md).
 - **The judge never blocks.** It is advisory by design; see
   [ARCHITECTURE.md](ARCHITECTURE.md#why-the-judge-is-advisory).
 

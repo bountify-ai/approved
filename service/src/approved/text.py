@@ -71,15 +71,13 @@ def _b64(match: re.Match[str]) -> str:
     return "[REDACTED]" if classes == 3 else run
 
 
-# URLs and Telegram bot commands in model text: Telegram makes both tappable.
+# URLs, e-mail addresses, anything domain-like, @mentions and /commands in model text: Telegram
+# makes all of them tappable. Order matters (URLs and e-mails before bare domains).
 _LINKS = (
     re.compile(r"\b(?:https?|ftp|tg)://\S+", re.IGNORECASE),
-    re.compile(r"\bwww\.\S+", re.IGNORECASE),
-    re.compile(r"\bt\.me/\S+", re.IGNORECASE),
-    re.compile(
-        r"\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|io|ai|me|sh|dev|app|xyz|co|ru|info)\b(?:/\S*)?",
-        re.IGNORECASE,
-    ),
+    re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),
+    re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.[A-Za-z][\w-]*\b(?:/\S*)?"),
+    re.compile(r"(?<![\w@])@[A-Za-z0-9_]{2,}"),
     re.compile(r"(?<![\w/<.~])/[A-Za-z][A-Za-z0-9_]{0,31}\b(?![/.])"),
 )
 LINK_REMOVED = "[link removed]"

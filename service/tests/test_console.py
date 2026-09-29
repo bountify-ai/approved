@@ -643,3 +643,93 @@ def test_public_posts_are_rate_limited_per_client(tmp_path: Path) -> None:
         ]
     assert codes[:5] == [200] * 5
     assert codes[5:] == [429, 429]
+
+
+# ------------------------------------------------------------------ S2(b,c): console off, no-store
+
+
+def test_console_can_be_turned_off_leaving_health(tmp_path: Path) -> None:
+    settings = load_settings(
+        {
+            "FACADE_URL": "https://f.test",
+            "TENANT_TOKEN": "t" * 24,
+            "OFFLINE": "1",
+            "STATE_DIR": str(tmp_path),
+            "CONSOLE_ENABLED": "0",
+        }
+    )
+    assert settings.console_enabled is False
+    app = create_app(context_from_settings(settings, lambda: dict(STATUS)), console=False)
+    with TestClient(app, base_url="https://console.test") as c:
+        assert c.get("/health").status_code == 200
+        for path in ("/", "/policy", "/connect", "/login", "/metrics", "/static/console.css"):
+            assert c.get(path).status_code == 404, path
+
+
+def test_console_is_on_by_default(tmp_path: Path) -> None:
+    env = {"FACADE_URL": "https://f.test", "TENANT_TOKEN": "t" * 24, "OFFLINE": "1"}
+    assert load_settings(env).console_enabled is True
+
+
+def test_sensitive_pages_are_not_cached(client: TestClient) -> None:
+    _login(client)
+    for path in ("/", "/connect", "/partials/live", "/metrics"):
+        assert client.get(path).headers["cache-control"] == "no-store", path
+
+
+# ------------------------------------------------------------------ rate limit: no lockout
+
+
+def _limited_app(tmp_path: Path, hops: int = 0):
+    from approved.console.limits import RateLimiter
+
+    settings = load_settings(
+        {
+            "FACADE_URL": "https://f.test",
+            "TENANT_TOKEN": "t" * 24,
+            "OFFLINE": "1",
+            "STATE_DIR": str(tmp_path),
+            "CONSOLE_TOKEN": CONSOLE_TOKEN,
+            "TRUSTED_PROXY_HOPS": str(hops),
+        }
+    )
+    return create_app(
+        context_from_settings(settings, lambda: dict(STATUS)), rate_limiter=RateLimiter(limit=3)
+    )
+
+
+def _try(c: TestClient, token: str, xff: str | None = None) -> int:
+    csrf = _csrf(c, "/login") if CSRF_COOKIE not in c.cookies else c.cookies[CSRF_COOKIE]
+    headers = {"x-forwarded-for": xff} if xff else {}
+    return c.post(
+        "/login", data={"token": token, "csrf": csrf}, headers=headers, follow_redirects=False
+    ).status_code
+
+
+def test_failed_logins_are_limited_but_the_valid_token_never_is(tmp_path: Path) -> None:
+    with TestClient(_limited_app(tmp_path), base_url="https://console.test") as c:
+        codes = [_try(c, "wrong") for _ in range(5)]
+        assert codes == [401, 401, 401, 429, 429]
+        assert _try(c, CONSOLE_TOKEN) == 303  # the flood never locks the operator out
+
+
+def test_trusted_hop_keys_the_limit_by_forwarded_client(tmp_path: Path) -> None:
+    with TestClient(_limited_app(tmp_path, hops=1), base_url="https://console.test") as c:
+        assert [_try(c, "wrong", "6.6.6.6, 10.0.0.1") for _ in range(4)][-1] == 429
+        # The rightmost hop is what our proxy saw; a spoofed left entry changes nothing.
+        assert _try(c, "wrong", "1.2.3.4, 10.0.0.1") == 429
+        assert _try(c, "wrong", "10.0.0.2") == 401  # another client behind the proxy
+    with TestClient(_limited_app(tmp_path, hops=0), base_url="https://console.test") as c:
+        codes = [_try(c, "wrong", f"9.9.9.{i}") for i in range(4)]
+        assert codes[-1] == 429  # untrusted header ignored: keyed by the socket peer
+
+
+def test_logout_revokes_the_session_server_side(client: TestClient) -> None:
+    _login(client)
+    old = client.cookies[SESSION_COOKIE]
+    client.post("/logout", data={"csrf": client.cookies[CSRF_COOKIE]}, follow_redirects=False)
+    client.cookies.set(SESSION_COOKIE, old)  # a copy of the cookie kept from before sign-out
+    assert client.get("/metrics").status_code == 401
+    client.cookies.clear()
+    _login(client)  # a fresh sign-in works again
+    assert client.get("/metrics").status_code == 200

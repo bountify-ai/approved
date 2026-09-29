@@ -94,6 +94,7 @@ def counters(state: JudgeState) -> dict[str, Any]:
         "escalation_rate": rate(needs_human, len(verdicts)),
         "absent": sum(1 for j in state.judged.values() if j.status == "absent"),
         "silence": silence(state),
+        "record_unverifiable": len(state.unverifiable),
     }
 
 

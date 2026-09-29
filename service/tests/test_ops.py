@@ -491,10 +491,9 @@ def test_reused_daemon_policy_is_never_rewritten(fake: FakeMaritime, tmp_path: P
 def test_replace_policy_refuses_while_a_request_is_open(fake: FakeMaritime, tmp_path: Path) -> None:
     _reused_with_other_policy(fake, tmp_path)
     fake.set(queue={"ok": True, "pending": [{"action_key": "k"}]})
-    before = _policy_writes(fake)
-    with pytest.raises(ProvisionError, match="1 open request"):
+    with pytest.raises(ProvisionError, match="open approval requests"):
         provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
-    assert _policy_writes(fake) == before
+    assert fake.state["remote_policy_sha"] == "f" * 64  # the one script refused to write
 
 
 def test_replace_policy_refuses_when_the_queue_is_unreadable(
@@ -538,3 +537,70 @@ def test_a_configured_protected_id_is_refused(
     fake.set(agents=[{"id": "ag-dog-1", "name": "innocent-looking"}])
     assert main(["ask", "innocent-looking", "hello"]) == 2
     assert fake.argvs("exec") == []
+
+
+# ------------------------------------------------------------------ S6: nested, fail closed
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"result": {"agent": {"name": "approval-hermes-gated", "id": "a1"}}},
+        {"ok": True, "result": {"id": "x", "agent": {"agentName": "approval-x16-hermes"}}},
+        {"agent": {"id": "a1"}, "aliases": [{"name": "my-dogfood"}]},
+    ],
+)
+def test_nested_protected_identities_are_refused(fake: FakeMaritime, answer: dict) -> None:
+    fake.set(agents=[{"id": "a1", "name": "acme-hermes"}], status_override={"acme-hermes": answer})
+    assert main(["ask", "acme-hermes", "hello"]) == 2
+    assert fake.argvs("exec") == []
+
+
+@pytest.mark.parametrize("answer", [{}, {"ok": True}, {"result": {"status": "running"}}])
+def test_unidentifiable_targets_fail_closed(fake: FakeMaritime, answer: dict) -> None:
+    fake.set(agents=[{"id": "a1", "name": "acme-hermes"}], status_override={"acme-hermes": answer})
+    assert main(["ask", "acme-hermes", "hello"]) == 2
+    assert main(["status", "acme"]) in (0, 2)  # daemon absent here; never an exec
+    assert fake.argvs("exec") == []
+
+
+def test_create_output_naming_a_protected_machine_is_refused(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    fake.set(
+        create_override={
+            "acme-daemon": {"created": [{"agent": {"name": "approval-dogfood", "id": "z"}}]}
+        }
+    )
+    with pytest.raises(ProtectedName):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    assert fake.argvs("env") == []  # refused before any credential was imported
+
+
+# ------------------------------------------------------------------ B2: probe and TOCTOU
+
+
+@pytest.mark.parametrize("probe", ["fail", "garbage"])
+def test_an_unreadable_policy_probe_stops_without_writing(
+    fake: FakeMaritime, tmp_path: Path, probe: str
+) -> None:
+    provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    fake.set(probe=probe)
+    before = _policy_writes(fake)
+    with pytest.raises(ProvisionError, match="could not read"):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+    assert _policy_writes(fake) == before
+
+
+def test_replace_checks_the_queue_and_writes_in_one_exec(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+    [write] = [a for a in fake.argvs("exec") if "base64 -d" in json.dumps(a)][-1:]
+    script = write[write.index("--") + 3]
+    assert script.index("queue --json") < script.index("base64 -d")  # check, then write
+    assert not any(
+        "queue --json" in json.dumps(a) and "base64 -d" not in json.dumps(a)
+        for a in fake.argvs("exec")
+    )  # no separate check-then-write pair

@@ -40,9 +40,9 @@ from starlette.responses import Response
 from ..config import Settings
 from ..logs import METRICS
 from ..reviewer import JudgeRequest, OfflineReviewer
-from .auth import CSRF_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE_S, ConsoleAuth
+from .auth import CSRF_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE_S, ConsoleAuth, SessionEpoch
 from .bundle import BundleError, build_bundle
-from .limits import RateLimiter, RequestGuard
+from .limits import RateLimiter, RequestGuard, client_ip
 from .live import load_view
 from .pages import connect_page, live_fragment, live_page, login_page, policy_page
 
@@ -68,6 +68,7 @@ class ConsoleContext:
     facade_url: str
     follow_status: Callable[[], dict[str, Any]]
     mode: str  # "offline" | "live"
+    trusted_proxy_hops: int = 0
 
     @property
     def facade_host(self) -> str:
@@ -83,11 +84,13 @@ def context_from_settings(
             settings.console_token,
             demo=settings.demo_mode,
             base_path=settings.public_base_path,
+            epoch=SessionEpoch(Path(settings.state_dir) / "console-epoch"),
         ),
         state_dir=settings.state_dir,
         facade_url=settings.facade_url,
         follow_status=follow_status,
         mode="offline" if settings.offline else "live",
+        trusted_proxy_hops=settings.trusted_proxy_hops,
     )
 
 
@@ -138,12 +141,14 @@ async def _form(request: Request) -> dict[str, str]:
     return {k: v[0] for k, v in parsed.items() if v}
 
 
-def create_app(ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None) -> FastAPI:
+def create_app(
+    ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None, console: bool = True
+) -> FastAPI:
     app = FastAPI(title="Approved console", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(_SecurityHeaders)
-    app.add_middleware(RequestGuard, rate=rate_limiter or RateLimiter())
+    limiter = rate_limiter or RateLimiter()
+    app.add_middleware(RequestGuard, rate=limiter, trusted_proxy_hops=ctx.trusted_proxy_hops)
     static_dir = resources.files("approved.console").joinpath("static")
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     shim = resources.files("approved.console").joinpath("downloads", "hermes-hook-shim.sh")
 
     base = ctx.auth.base_path
@@ -176,6 +181,12 @@ def create_app(ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None) 
                 {"status": "degraded", "reason": reason, "worker": worker}, status_code=503
             )
         return JSONResponse({"status": "ok", "worker": worker})
+
+    if not console:
+        # CONSOLE_ENABLED=0: the judge runs headless; only the platform's /health remains.
+        return app
+
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     @app.get("/policy", response_class=HTMLResponse)
     def policy(request: Request) -> Response:
@@ -240,6 +251,10 @@ def create_app(ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None) 
             return html(request, page, csrf, status=403)
         if not ctx.auth.check_token(form.get("token", "").strip()):
             METRICS.incr("console.login_failed")
+            # Only FAILED sign-ins count toward the limit; the valid token always gets in.
+            if not limiter.allow(client_ip(request.scope, ctx.trusted_proxy_hops)):
+                page = login_page(csrf=csrf[0], error="Too many failed attempts.", demo_note=None)
+                return html(request, page, csrf, status=429)
             page = login_page(csrf=csrf[0], error="That token is not right.", demo_note=None)
             return html(request, page, csrf, status=401)
         response = redirect("/")
@@ -256,6 +271,7 @@ def create_app(ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None) 
         form = await _form(request)
         if not ctx.auth.csrf_ok(request, form.get("csrf")):
             raise HTTPException(status_code=403, detail="missing or stale CSRF token")
+        ctx.auth.revoke_all()
         response = redirect("/login" if ctx.auth.enabled else "/")
         options = ctx.auth.cookie_options()
         response.delete_cookie(

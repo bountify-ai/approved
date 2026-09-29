@@ -65,9 +65,6 @@ def test_unknown_record_fields_are_preserved() -> None:
         (lambda b: b["records"][0].__setitem__("hash", "not-a-hash"), "hash-malformed"),
         (lambda b: b["cursor"].__setitem__("seq", 2), "cursor-mismatch"),
         (lambda b: b["cursor"].__setitem__("hash", "f" * 64), "cursor-mismatch"),
-        (lambda b: b["records"][0].__setitem__("event", 7), "hash-mismatch"),
-        (lambda b: b["records"][2]["payload"].__setitem__("summary", "ls"), "hash-mismatch"),
-        (lambda b: b["records"][0].__setitem__("alg", "sha1/none"), "alg-unsupported"),
     ],
 )
 def test_broken_links_are_chain_breaks(mutate, reason: str) -> None:
@@ -87,17 +84,82 @@ def test_hashes_are_recomputed_with_the_runtime_scheme() -> None:
         assert record_hash(record) == record["hash"]
 
 
-def test_a_well_hashed_but_malformed_record_is_still_refused() -> None:
+@pytest.mark.parametrize(
+    ("mutate", "seq", "reason"),
+    [
+        (lambda b: b["records"][0].__setitem__("event", 7), 1, "hash-mismatch"),
+        (lambda b: b["records"][2]["payload"].__setitem__("summary", "ls"), 3, "hash-mismatch"),
+        (lambda b: b["records"][0].__setitem__("alg", "sha1/none"), 1, "alg-unsupported"),
+        (
+            lambda b: b["records"][1]["payload"].__setitem__("n", float("inf")),
+            2,
+            "record-unverifiable",
+        ),
+    ],
+)
+def test_content_failures_are_not_terminal(mutate, seq: int, reason: str) -> None:
+    """Links hold; content does not verify. Agent text must not halt the judge: the record is
+    marked unverifiable and the page still verifies."""
+    body = copy.deepcopy(GENESIS)
+    mutate(body)
+    page = verify_page(body, Cursor())
+    assert page.unverifiable == {seq: reason}
+    assert [r.seq for r in page.records] == [1, 2, 3]
+    assert page.cursor.seq == 3
+
+
+def test_a_well_hashed_but_malformed_record_is_unverifiable_not_terminal() -> None:
     from approved.follow import record_hash
 
     body = copy.deepcopy(GENESIS)
     bad = body["records"][0]
-    bad["event"] = 7
+    bad["actor"] = 7  # well hashed below, but not a valid record
     bad["hash"] = record_hash(bad)
-    body["records"][1]["prev"] = bad["hash"]  # keep the links; the next record will not verify
-    with pytest.raises(ChainBreakError) as info:
-        verify_page({**body, "records": [bad]}, Cursor())
-    assert info.value.reason == "record-malformed"
+    page = verify_page(
+        {**body, "records": [bad], "cursor": {"seq": 1, "hash": bad["hash"]}}, Cursor()
+    )
+    assert page.unverifiable == {1: "record-malformed"}
+
+
+# Output of core's own canonicalizer (approval-md dist/src/core/jcs.js, `canonicalize`) for the
+# value below, captured with `node -e` on 2026-09-29. It covers ECMAScript number formatting
+# (0.00005, 1e-7, -0, 1e+21, an integer past 2**53), a lone surrogate, U+2028, and UTF-16 key
+# order (a surrogate pair sorts before U+FFFF).
+CORE_JCS = (
+    '{"a":0.00005,"b":1e-7,"c":0,"d":12345678901234567000,"e":"\\ud800",'
+    '"f":{"\u00e9":"\U0001f600\u2028","\U0001f600":1,"\uffff":2},'
+    '"g":1e+21,"h":1.23456e-8,"i":1.5e+300}'
+)
+
+
+def test_jcs_matches_core_byte_for_byte() -> None:
+    from approved.follow import jcs
+
+    value = {
+        "a": 0.00005,
+        "b": 1e-7,
+        "c": -0.0,
+        "d": 12345678901234567890,
+        "e": "\ud800",
+        "f": {"\u00e9": "\U0001f600\u2028", "\U0001f600": 1, "\uffff": 2},
+        "g": 1e21,
+        "h": 123.456e-10,
+        "i": 1.5e300,
+    }
+    assert jcs(value) == CORE_JCS
+
+
+def test_a_record_with_a_lone_surrogate_verifies() -> None:
+    from approved.follow import record_hash
+
+    body = copy.deepcopy(GENESIS)
+    rec = body["records"][0]
+    rec["payload"]["note"] = "bad \ud800 text 0.00005"
+    rec["hash"] = record_hash(rec)
+    page = verify_page(
+        {**body, "records": [rec], "cursor": {"seq": 1, "hash": rec["hash"]}}, Cursor()
+    )
+    assert page.unverifiable == {}
 
 
 def test_first_record_must_link_to_cursor_hash() -> None:

@@ -167,7 +167,8 @@ def live_fragment(view: LiveView, status: dict[str, Any], *, facade_host: str) -
     <div class="sub">escalation rate {e(_rate(c["escalation_rate"]))} · {e(c["verdicts"])} verdicts · {e(c["absent"])} absent</div></div>
   <div class="panel card"><p class="eyebrow">Judge</p>
     <div class="value">{_chip(judge_state, judge_cls)}</div>
-    <div class="sub">silence by reason: {silence_items or "none"}</div></div>
+    <div class="sub">silence by reason: {silence_items or "none"}</div>
+    {f'<div class="sub">record-unverifiable: {e(c["record_unverifiable"])} (not judged, followed past)</div>' if c.get("record_unverifiable") else ""}</div>
 </section>"""
 
     if view.open_requests:

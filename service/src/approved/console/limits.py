@@ -18,7 +18,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
-__all__ = ["BODY_LIMITS", "RATE_LIMITED", "RateLimiter", "RequestGuard"]
+__all__ = ["BODY_LIMITS", "RATE_LIMITED", "RateLimiter", "RequestGuard", "client_ip"]
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -32,7 +32,24 @@ BODY_LIMITS: dict[str, int] = {
     "/connect": 8 * 1024,
     "/api/preview": 16 * 1024,
 }
-RATE_LIMITED = frozenset({"/login", "/logout", "/api/preview"})
+#: Rate-limited by client on every request. /login is limited on FAILED attempts only (in the
+#: handler): a request carrying the valid 256-bit token is never throttled, so a flood from a
+#: shared address can never lock the operator out.
+RATE_LIMITED = frozenset({"/logout", "/api/preview"})
+
+
+def client_ip(scope: Scope, trusted_proxy_hops: int = 0) -> str:
+    """The client address: the socket peer, or with ``trusted_proxy_hops`` >= 1 the entry that
+    many hops from the right of ``X-Forwarded-For`` (the address our own proxy saw). Entries
+    further left are client-supplied and never trusted."""
+    if trusted_proxy_hops >= 1:
+        headers = dict(scope.get("headers") or [])
+        forwarded = headers.get(b"x-forwarded-for")
+        if forwarded:
+            hops = [h.strip() for h in forwarded.decode("latin-1").split(",") if h.strip()]
+            if len(hops) >= trusted_proxy_hops:
+                return hops[-trusted_proxy_hops]
+    return str((scope.get("client") or ("unknown", 0))[0])
 
 
 class RateLimiter:
@@ -87,18 +104,20 @@ class RequestGuard:
         app: ASGIApp,
         limits: dict[str, int] | None = None,
         rate: RateLimiter | None = None,
+        trusted_proxy_hops: int = 0,
     ) -> None:
         self.app = app
         self.limits = BODY_LIMITS if limits is None else limits
         self.rate = rate or RateLimiter()
+        self.trusted_proxy_hops = trusted_proxy_hops
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "")
         if scope.get("type") != "http" or scope.get("method") != "POST" or path not in self.limits:
             await self.app(scope, receive, send)
             return
-        client = (scope.get("client") or ("unknown", 0))[0]
-        if path in RATE_LIMITED and not self.rate.allow(str(client)):
+        client = client_ip(scope, self.trusted_proxy_hops)
+        if path in RATE_LIMITED and not self.rate.allow(client):
             await _reply(send, 429, "too many requests; slow down")
             return
         limit = self.limits[path]

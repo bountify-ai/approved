@@ -33,10 +33,10 @@ they invent. Only TLS does that, which is why a non-loopback facade must be ``ht
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -106,27 +106,75 @@ class FollowPage:
     records: list[LogRecord]
     cursor: Cursor
     caught_up: bool
+    #: seq -> reason, for records whose links hold but whose content does not verify
+    #: (``hash-mismatch``, ``record-unverifiable``, ``alg-unsupported``, ``record-malformed``).
+    #: Not terminal: the caller skips them (never judges them) and keeps following.
+    unverifiable: dict[int, str] = field(default_factory=dict)
 
 
 HASH_ALG = "sha256/jcs"
 
 
+_MAX_SAFE_INT = 2**53
+
+
 def _jcs_number(value: float) -> str:
-    """ECMAScript Number-to-string, as RFC 8785 requires for non-integral numbers."""
+    """ECMAScript ``Number::toString`` (RFC 8785 section 3.2.2.3), exactly as core's
+    ``JSON.stringify`` emits it: ``0.00005``, ``1e-7``, ``1e+21``, ``-0`` as ``0``."""
     if not math.isfinite(value):
         raise ValueError("non-finite number")
-    if value == int(value) and abs(value) < 1e21:
-        return str(int(value))
-    text = repr(value)
-    if "e" in text:
-        mantissa, exp = text.split("e")
-        sign = "-" if exp.startswith("-") else "+"
-        return f"{mantissa}e{sign}{int(exp.lstrip('+-'))}"
-    return text
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    # repr() gives the shortest round-trip digits, the same digits ECMAScript chooses.
+    exponent_digits = Decimal(repr(abs(value))).normalize().as_tuple()
+    digits = "".join(str(d) for d in exponent_digits.digits)
+    k = len(digits)
+    n = int(exponent_digits.exponent) + k  # value = 0.digits * 10**n
+    if k <= n <= 21:
+        text = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        text = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        text = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        mantissa = digits if k == 1 else digits[0] + "." + digits[1:]
+        text = f"{mantissa}e{'+' if e > 0 else '-'}{abs(e)}"
+    return sign + text
+
+
+def _jcs_string(value: str) -> str:
+    """ECMAScript ``QuoteJSONString`` (well-formed ``JSON.stringify``): short escapes, lowercase
+    ``\\u00xx`` controls, lone surrogates escaped as ``\\udxxx``, everything else literal."""
+    out = ['"']
+    for ch in value:
+        code = ord(ch)
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch in _SHORT_ESCAPES:
+            out.append(_SHORT_ESCAPES[ch])
+        elif code < 0x20 or 0xD800 <= code <= 0xDFFF:
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+_SHORT_ESCAPES = {"\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+
+
+def _utf16_key(key: str) -> bytes:
+    return key.encode("utf-16-be", "surrogatepass")
 
 
 def jcs(value: object) -> str:
-    """RFC 8785 canonical JSON for the value types a log record holds."""
+    """RFC 8785 canonical JSON, mirroring core ``src/core/jcs.ts`` (which delegates numbers and
+    strings to ``JSON.stringify``). Values JSON.parse would give JavaScript are handled; an
+    integer beyond 2**53 is first rounded to a double, as JavaScript would have parsed it."""
     if value is None:
         return "null"
     if value is True:
@@ -134,25 +182,22 @@ def jcs(value: object) -> str:
     if value is False:
         return "false"
     if isinstance(value, int):
-        return str(value)
+        return str(value) if abs(value) < _MAX_SAFE_INT else _jcs_number(float(value))
     if isinstance(value, float):
         return _jcs_number(value)
     if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
+        return _jcs_string(value)
     if isinstance(value, list):
         return "[" + ",".join(jcs(v) for v in value) + "]"
     if isinstance(value, dict):
-        keys = sorted(value, key=lambda k: str(k).encode("utf-16-be"))
-        return (
-            "{"
-            + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + jcs(value[k]) for k in keys)
-            + "}"
-        )
+        keys = sorted(value, key=lambda k: _utf16_key(str(k)))
+        return "{" + ",".join(_jcs_string(str(k)) + ":" + jcs(value[k]) for k in keys) + "}"
     raise ValueError(f"unsupported JSON value {type(value).__name__}")
 
 
 def record_hash(record: dict[str, object]) -> str:
     body = {k: v for k, v in record.items() if k != "hash"}
+    # Lone surrogates were escaped by _jcs_string, so the text is always valid UTF-8.
     return hashlib.sha256(jcs(body).encode("utf-8")).hexdigest()
 
 
@@ -167,8 +212,13 @@ def verify_page(body: object, cursor: Cursor) -> FollowPage:
     """Validate one ``/log/follow`` body against ``cursor``.
 
     Raises :class:`FollowError` for a body that is not a follow page at all (a proxy error
-    page, say), and :class:`ChainBreakError` for a page that is well-formed but does not
-    continue the chain from ``cursor``.
+    page, say), and :class:`ChainBreakError` for a page whose LINKS do not continue the chain
+    from ``cursor`` (a seq gap or duplicate, a ``prev`` that is not the previous ``hash``, a
+    malformed hash, a cursor that is not the last record): that is terminal.
+
+    A record whose links hold but whose content does not recompute to its hash, or cannot be
+    encoded, is NOT terminal. Agent-supplied text inside a record must not be able to halt the
+    judge, so such a record is returned in ``unverifiable`` and the caller skips it.
     """
     if not isinstance(body, dict):
         raise FollowError("follow body is not a JSON object")
@@ -183,6 +233,7 @@ def verify_page(body: object, cursor: Cursor) -> FollowPage:
     expect_seq = cursor.seq + 1
     expect_prev = cursor.hash
     parsed: list[LogRecord] = []
+    unverifiable: dict[int, str] = {}
     for raw in records:
         if not isinstance(raw, dict):
             raise ChainBreakError("record-not-object", expect_seq)
@@ -195,18 +246,25 @@ def verify_page(body: object, cursor: Cursor) -> FollowPage:
             raise ChainBreakError("hash-malformed", expect_seq)
         if prev != expect_prev:
             raise ChainBreakError("prev-mismatch", expect_seq)
+        problem: str | None = None
         if raw.get("alg") != HASH_ALG:
-            raise ChainBreakError("alg-unsupported", expect_seq)
-        try:
-            recomputed = record_hash(raw)
-        except ValueError:
-            raise ChainBreakError("record-unverifiable", expect_seq) from None
-        if recomputed != rhash:
-            raise ChainBreakError("hash-mismatch", expect_seq)
-        try:
-            parsed.append(LogRecord.model_validate(raw))
-        except ValidationError:
-            raise ChainBreakError("record-malformed", expect_seq) from None
+            problem = "alg-unsupported"
+        else:
+            try:
+                if record_hash(raw) != rhash:
+                    problem = "hash-mismatch"
+            except (ValueError, RecursionError):
+                problem = "record-unverifiable"
+        record: LogRecord | None = None
+        if problem is None:
+            try:
+                record = LogRecord.model_validate(raw)
+            except ValidationError:
+                problem = "record-malformed"
+        if record is None:
+            unverifiable[seq] = problem or "record-unverifiable"
+            record = _placeholder(raw, seq, rhash, prev)
+        parsed.append(record)
         expect_seq = seq + 1
         expect_prev = rhash
 
@@ -217,6 +275,24 @@ def verify_page(body: object, cursor: Cursor) -> FollowPage:
         records=parsed,
         cursor=Cursor(seq=last_seq, hash=expect_prev),
         caught_up=caught_up,
+        unverifiable=unverifiable,
+    )
+
+
+def _placeholder(raw: dict[str, Any], seq: int, rhash: str, prev: str | None) -> LogRecord:
+    """A stand-in for a record that did not verify: enough to advance past it, nothing more."""
+    event = raw.get("event")
+    key = raw.get("action_key")
+    return LogRecord.model_construct(
+        seq=seq,
+        hash=rhash,
+        prev=prev,
+        event=event if isinstance(event, str) else "unknown",
+        actor="unverified",
+        ts="",
+        task=None,
+        action_key=key if isinstance(key, str) else None,
+        payload={},
     )
 
 

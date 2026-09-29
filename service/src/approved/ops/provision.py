@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import re
 import time
 from collections.abc import Callable
@@ -45,7 +44,7 @@ from ..console.bundle import (
 )
 from .credentials import CredentialDir
 from .maritime import Maritime, MaritimeError, agent_id
-from .names import refuse_protected
+from .names import identities, refuse_any_protected, refuse_protected
 
 __all__ = [
     "APPROVAL_CLI",
@@ -146,6 +145,8 @@ class _Provisioner:
         self.say(f"{name}: creating ({' '.join(argv[:3])} ...)")
         created = self.m.create(argv)
         self.o.created.append(name)
+        if identities(created):  # whatever create says it made must not be protected
+            refuse_any_protected(created, what=name)
         nested = created.get("agent")
         agent: dict[str, Any] = nested if isinstance(nested, dict) else created
         found = self.m.find(name) or agent
@@ -178,18 +179,24 @@ class _Provisioner:
             f"(/health 200: {health_ok}, /status 401: {status_ok})"
         )
 
-    def open_requests(self, daemon: str, tenant: str) -> int:
-        """Pending approval requests, from the read-only ``approval queue --json`` verb.
-
-        Anything unreadable counts as "unknown", which the caller treats as open.
-        """
-        result = self.m.exec(daemon, f'cd /data/{tenant} && node "$APPROVAL_CLI" queue --json\n')
-        try:
-            body = json.loads(result.stdout)
-            pending = body["pending"]
-        except (ValueError, KeyError, TypeError):
-            return -1
-        return len(pending) if result.exit_code == 0 and isinstance(pending, list) else -1
+    def probe_policy(self, daemon: str, tenant: str) -> str | None:
+        """The store policy's sha256, ``None`` if there is no policy file. Anything else (an
+        exec failure, an unreadable file, output that does not parse) raises: never a guess."""
+        store = f"/data/{tenant}"
+        probe = self.m.exec(
+            daemon,
+            f"if [ -f {store}/APPROVAL.md ]; then sha256sum {store}/APPROVAL.md || echo UNREADABLE;"
+            " else echo ABSENT; fi\n",
+        )
+        text = probe.stdout.strip()
+        if probe.exit_code == 0 and text == "ABSENT":
+            return None
+        match = _SHA_LINE.match(text)
+        if probe.exit_code != 0 or match is None:
+            raise ProvisionError(
+                f"could not read {daemon}'s current policy hash; nothing was written"
+            )
+        return match.group(1)
 
     def write_policy(
         self, daemon: str, tenant: str, policy: bytes, *, reused: bool, replace: bool
@@ -197,42 +204,56 @@ class _Provisioner:
         """Put the policy in the store. Returns (sha256, written).
 
         On a REUSED daemon an existing, different policy is never overwritten unless
-        ``--replace-policy`` is given, and even then only while no request is open: a policy
-        change under an open request changes what that request is judged against.
+        ``--replace-policy`` is given, and then the open-request check and the write run in ONE
+        exec script (``approval queue --json`` must show nothing pending, or nothing is
+        written), so no request can open between the check and the write. After the write the
+        policy is unattested until the human re-attests, and core runs an unattested policy
+        manual-only: the window fails safe, it does not fail open.
         """
         local_sha = hashlib.sha256(policy).hexdigest()
-        store = f"/data/{tenant}"
-        probe = self.m.exec(daemon, f"sha256sum {store}/APPROVAL.md 2>/dev/null || true\n")
-        match = _SHA_LINE.match(probe.stdout.strip())
-        if match and match.group(1) == local_sha:
+        remote_sha = self.probe_policy(daemon, tenant)
+        if remote_sha == local_sha:
             self.say(f"policy already in place (sha256 {local_sha[:12]}...)")
             return local_sha, False
-        if match and reused:
-            remote_sha = match.group(1)
-            if not replace:
-                raise ProvisionError(
-                    f"{daemon} already holds a different policy (remote sha256 {remote_sha}, "
-                    f"local {local_sha}). Nothing was written. To replace it, confirm no "
-                    "approval request is open and re-run with --replace-policy; the approver "
-                    "must then re-attest."
-                )
-            pending = self.open_requests(daemon, tenant)
-            if pending != 0:
-                what = "could not be read" if pending < 0 else f"has {pending} open request(s)"
-                raise ProvisionError(
-                    f"not replacing the policy: {daemon}'s queue {what}. Decide or let them "
-                    "expire first. Nothing was written."
-                )
+        check_queue = reused and remote_sha is not None
+        if check_queue and not replace:
+            raise ProvisionError(
+                f"{daemon} already holds a different policy (remote sha256 {remote_sha}, "
+                f"local {local_sha}). Nothing was written. To replace it, confirm no "
+                "approval request is open and re-run with --replace-policy; the approver "
+                "must then re-attest."
+            )
         encoded = base64.b64encode(policy).decode("ascii")
+        store = f"/data/{tenant}"
+        guard = (
+            'q="$(node "$APPROVAL_CLI" queue --json)" || { echo QUEUE-UNREADABLE >&2; exit 5; }\n'
+            "node -e 'const q=JSON.parse(process.argv[1]);"
+            'process.exit(Array.isArray(q.pending)&&q.pending.length===0?0:4)\' "$q" '
+            "|| { echo OPEN-REQUESTS >&2; exit 4; }\n"
+            if check_queue
+            else ""
+        )
         script = (
             "set -eu\n"
             f"d={store}\n"
             'test -d "$d" || { echo "store $d missing: has the daemon booted?" >&2; exit 3; }\n'
-            f"printf %s '{encoded}' | base64 -d > \"$d/.APPROVAL.md.approved-tmp\"\n"
+            'cd "$d"\n'
+            + guard
+            + f"printf %s '{encoded}' | base64 -d > \"$d/.APPROVAL.md.approved-tmp\"\n"
             'mv "$d/.APPROVAL.md.approved-tmp" "$d/APPROVAL.md"\n'
             'sha256sum "$d/APPROVAL.md"\n'
         )
         result = self.m.exec(daemon, script)
+        if result.exit_code == 4:
+            raise ProvisionError(
+                f"not replacing the policy: {daemon} has open approval requests. Decide them or "
+                "let them expire first. Nothing was written."
+            )
+        if result.exit_code == 5:
+            raise ProvisionError(
+                f"not replacing the policy: {daemon}'s queue could not be read. Nothing was "
+                "written."
+            )
         remote = _SHA_LINE.match(result.stdout.strip())
         if result.exit_code != 0 or remote is None:
             raise ProvisionError(f"writing the policy failed (exit {result.exit_code})")
@@ -280,9 +301,7 @@ def provision(maritime: Maritime, opts: ProvisionOptions) -> dict[str, Any]:
     for name in (daemon, hermes, judge):
         found = agents.get(name)
         if found is not None:  # reuse only what does not resolve to a protected machine
-            for key in ("id", "agentId", "name"):
-                if isinstance(found.get(key), str):
-                    refuse_protected(found[key])
+            refuse_any_protected(found, what=name)
     wanted = [daemon] + ([hermes] if opts.hermes else []) + ([judge] if opts.judge else [])
     if any(n in agents for n in wanted) and not creds.exists:
         raise ProvisionError(

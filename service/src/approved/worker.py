@@ -39,7 +39,7 @@ from .judge import Judge, JudgeOutcome
 from .logs import METRICS, log
 from .notify import Notifier, format_advisory, format_chain_break
 from .reviewer import JudgeRequest
-from .state import Cursor, DecisionRecord, JudgedEntry, StateStore
+from .state import Cursor, DecisionRecord, JudgedEntry, StateStore, UnverifiableRecord
 
 __all__ = [
     "EXIT_CHAIN_BREAK",
@@ -287,14 +287,20 @@ class Worker:
             return StepResult(caught_up=False, records=0, error="follow")
 
         decided_later = {
-            r.action_key for r in page.records if r.event in TERMINAL_EVENTS and r.action_key
+            r.action_key
+            for r in page.records
+            if r.event in TERMINAL_EVENTS and r.action_key and r.seq not in page.unverifiable
         }
         for record in page.records:
             if self._stop.is_set() and record.event == REQUEST_EVENT:
                 # Stop before starting a new judgement; the cursor stays before this record.
                 self.store.save()
                 return StepResult(caught_up=False, records=0)
-            self._handle(record, decided_later)
+            reason = page.unverifiable.get(record.seq)
+            if reason is not None:
+                self._on_unverifiable(record, reason)
+            else:
+                self._handle(record, decided_later)
             # Track progress in memory: every save inside the page (each claim and settle)
             # then persists how far it got, and a crash replays only records after that save,
             # which are idempotent.
@@ -435,6 +441,23 @@ class Worker:
         except Exception as exc:  # noqa: BLE001 - a feedback hook never stops the loop
             METRICS.incr("decision.hook_failed")
             log("decision.hook-failed", level="warning", error=type(exc).__name__)
+
+    def _on_unverifiable(self, record: LogRecord, reason: str) -> None:
+        """Links held, content did not verify: never judged, surfaced, and followed past."""
+        METRICS.incr("follow.record_unverifiable")
+        log(
+            "record-unverifiable",
+            level="warning",
+            seq=record.seq,
+            record_event=record.event,
+            reason=reason,
+            action_key=record.action_key,
+        )
+        self.store.note_unverifiable(
+            UnverifiableRecord(
+                seq=record.seq, event=record.event, reason=reason, action_key=record.action_key
+            )
+        )
 
     # ------------------------------------------------------------------ chain break
 

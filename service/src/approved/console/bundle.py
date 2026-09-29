@@ -231,6 +231,7 @@ def judge_env(
         EnvVar("FACADE_URL", facade_url),
         EnvVar("STATE_DIR", f"/data/judge-{tenant}"),
         EnvVar("OFFLINE", "1"),
+        EnvVar("TRUSTED_PROXY_HOPS", "1"),  # Maritime's public proxy appends X-Forwarded-For
         # The console's public prefix on the shared Maritime origin: cookies are scoped to it.
         EnvVar(
             "PUBLIC_BASE_PATH",

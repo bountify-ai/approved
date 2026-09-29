@@ -26,7 +26,8 @@ an approver decides without a second opinion: requests shaped to time the review
 its breaker, or bursts that keep the facade busy until requests are decided unread. Silence is
 never treated as assent, and it is visible: every decision records whether the advisory was
 sent (`advisory: sent`) or why not (`absent:timeout`, `absent:circuit-open`,
-`absent:already-decided`, `absent:not-seen`, ...), and the console shows "judge silent:
+`absent:already-decided`, `absent:not-seen`, `absent:record-unverifiable`, ...), and the
+console shows "judge silent:
 <reason>" with counts by reason (`test_silence_is_recorded_and_shown`).
 
 **Out of scope.** A compromised daemon machine or Maritime itself; a compromised approver
@@ -79,12 +80,17 @@ The console and the CLI add:
 - **Console.** The session cookie is `<issued_at>.<HMAC(token, issued_at)>`, never the token,
   valid 12 hours and invalidated when the token rotates; `HttpOnly`, `SameSite=Strict`,
   `Secure` outside demo mode, and `Path` set to the console's public prefix
-  (`PUBLIC_BASE_PATH`). **Shared origin:** on Maritime every public agent lives under
-  `https://api.maritime.sh`; the path scope keeps the cookie off other agents' paths, but pages
-  of another agent on the same origin are same-site and could still send requests with it, so
-  the CSRF token is what protects writes, and a console that matters belongs on its own origin.
-  Bodies are capped before they are read (8 KiB forms, 16 KiB preview), and the public POST
-  routes are rate-limited per client address. Strict
+  (`PUBLIC_BASE_PATH`). Signing out revokes every session (an epoch in `STATE_DIR` is mixed
+  into the MAC). Bodies are capped before they are read (8 KiB forms, 16 KiB preview). Failed
+  sign-ins and the public POST routes are rate-limited per client; a sign-in with the valid
+  token is never limited, so a flood cannot lock the operator out. The client is the socket
+  peer, or with `TRUSTED_PROXY_HOPS=1` (set for Maritime) the rightmost `X-Forwarded-For` hop.
+- **Shared origin.** A console at `https://api.maritime.sh/a/<id>` shares its origin with every
+  other public agent on Maritime, and any page on that origin is same-origin with the console:
+  the cookie `Path` and `SameSite` do not separate them. **Expose the console on a shared origin
+  only for demos; in production put it on its own domain, or run the judge with
+  `CONSOLE_ENABLED=0`** (only `/health` is served then). Sensitive pages are sent
+  `Cache-Control: no-store`. Strict
   CSP (`'self'` only, no inline script), frame denial, no CORS, double-submit CSRF.
 - **CLI.** Credentials are generated locally into `./.approved/<tenant>/` (0700 directory,
   0600 files), reach Maritime only through `maritime env import <agent> <file>`, and a
@@ -118,20 +124,34 @@ the platform.
 
 The judge never holds the approval bot's token. It posts through its own, second bot
 (`JUDGE_TG_BOT_TOKEN`), which the approver must `/start` once so it may message them; the
-judge refuses to start with the approval bot's token in its environment, and
+judge refuses to start with the approval bot's token in its environment
+(`HOSTED_*_TG_BOT_TOKEN`, `APPROVAL_TG_TOKEN`, or the plain legacy `TG_BOT_TOKEN`), and
 `approved provision --judge` refuses a judge bot file whose contents equal the approval bot's
 (compared locally, never printed). Every advisory starts "🧑‍⚖️ Judge (advisory AI, not an
 approval)", has no buttons, is sent without link previews, and has URLs and `/commands` in the
-model's text replaced with `[link removed]`; the only link it carries is a `wandb.ai` trace
-URL from our own formatter.
+model's text replaced with `[link removed]`, as are e-mail addresses, anything domain-like
+and `@mentions`; the only link it carries is a `wandb.ai` trace URL from our own formatter.
 
 ## Transport
 
-The judge requires an `https` facade URL (http only for loopback, a compose service name, or
-demo mode). It recomputes every record's hash and checks every link, which catches corrupted
-or edited records and pins everything after its cursor. That does not authenticate new
-records: whoever controls the stream can hash records they invent, so TLS is the control
-against a man in the middle.
+The judge requires an `https` facade URL (http only for loopback, demo mode, or a single-label
+host with `ALLOW_INSECURE_FACADE=1`). It checks every link (seq, `prev`, cursor) and
+recomputes every record's hash with core's own scheme (SHA-256 over RFC 8785 JCS; numbers and
+strings serialised exactly as ECMAScript does, checked byte for byte against core's
+canonicalizer). A broken link is terminal. A record whose links hold but whose content does
+not recompute, or cannot be encoded, is not: agent-supplied text must not be able to halt the
+judge, so that record is marked `record-unverifiable`, never judged, shown in the console and
+counted, and the judge follows past it. None of this authenticates new records (whoever
+controls the stream can hash records they invent), so TLS is the control against a man in the
+middle.
+
+## Replacing a policy
+
+`approved provision` never overwrites a different policy on a daemon it did not just create.
+With `--replace-policy` the open-request check (`approval queue --json`) and the write run in
+one exec script, so no request can open between them; an unreadable hash probe or queue stops
+it. The remaining window: after the write the policy is unattested until the human re-attests,
+and core runs an unattested policy manual-only, so the window fails safe.
 
 ## Known gaps
 

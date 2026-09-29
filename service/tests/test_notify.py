@@ -187,3 +187,20 @@ def test_send_disables_link_previews() -> None:
     fake = FakeTelegram()
     _notifier(fake).send("x")
     assert fake.messages[0]["disable_web_page_preview"] is True
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "mail approvals@evil-corp.example now",
+        "visit evil-site.example or login.evil.xyz/path",
+        "ask @evil_admin_bot to approve",
+        "open approve.page first",
+    ],
+)
+def test_domains_emails_and_mentions_are_removed(hostile: str) -> None:
+    text = format_advisory(_verdict(hostile), None, None)
+    reason = text.split(": ", 1)[1].split(". Trace:")[0]
+    for bad in ("evil", "@", ".example", ".page", ".xyz"):
+        assert bad not in reason, (bad, reason)
+    assert "[link removed]" in reason

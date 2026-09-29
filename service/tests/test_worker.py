@@ -357,3 +357,21 @@ def test_follow_failures_retry_quickly_before_backing_off(make_worker, facade) -
     poll = worker.poll_interval_s
     assert delays[:5] == [poll] * 5
     assert delays[5:8] == [poll * 2, poll * 4, poll * 8]
+
+
+def test_an_unverifiable_record_is_skipped_surfaced_and_followed_past(
+    make_worker, facade, telegram
+) -> None:
+    """A request whose content does not recompute is never judged, is recorded, and the judge
+    keeps following: the next request is judged."""
+    facade.append(request_event("bad"), request_event("good"))
+    facade.records[0]["payload"]["summary"] = "edited after hashing"  # content, not links
+    reviewer = ScriptedReviewer([verdict()])
+    worker = make_worker(reviewer)
+    assert worker.run(once=True) == EXIT_OK
+    assert [r.action_key for r in reviewer.seen] == ["good"]
+    assert worker.store.state.judged["bad"].reason == "record-unverifiable"
+    assert worker.store.state.chain_break is None
+    [noted] = worker.store.state.unverifiable
+    assert (noted.seq, noted.reason) == (1, "hash-mismatch")
+    assert logs.METRICS.get("follow.record_unverifiable") == 1

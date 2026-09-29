@@ -107,8 +107,10 @@ judge has done, never the truth about the log.
   most three times, and the client skips feedback already present on the call.
 - **Task context.** A task's summary is kept until its request closes, so a restart between
   registration and request does not lose the reviewer's context.
-- **Chain break.** Every record's hash is recomputed (SHA-256 over JCS, core SPEC section 8)
-  and every link checked. A break is persisted and terminal: the worker exits 3 and refuses to
+- **Unverifiable record.** A record whose links hold but whose content does not recompute
+  (SHA-256 over JCS, core SPEC section 8) is skipped and recorded, not judged; the judge
+  follows past it.
+- **Chain break.** A broken link is persisted and terminal: the worker exits 3 and refuses to
   follow until an
   operator investigates.
 - **Fail closed on bad state.** A state file that does not parse, or that belongs to a

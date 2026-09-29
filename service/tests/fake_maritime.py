@@ -107,7 +107,7 @@ if cmd == "create":
         fail(1, "name_taken")
     agent = {"id": f"id-{name}", "name": name, "status": "deploying"}
     agents.append(agent)
-    ok(agent)
+    ok(state.get("create_override", {}).get(name, agent))
 if cmd == "env" and argv[1] == "import":
     agent, path = argv[2], argv[3]
     keys = [line.split("=", 1)[0] for line in Path(path).read_text().splitlines() if "=" in line]
@@ -118,6 +118,9 @@ if cmd in ("stop", "start"):
         fail(3, "not_found")
     ok({"ok": True})
 if cmd == "status":
+    override = state.get("status_override", {})
+    if argv[1] in override:
+        ok(override[argv[1]])
     if argv[1] not in find:
         fail(3, "not_found")
     ok({**find[argv[1]], "status": "running"})
@@ -125,13 +128,25 @@ if cmd == "exec":
     script = argv[argv.index("--") + 3]
     out = ""
     written = re.search(r"printf %s '([A-Za-z0-9+/=]+)' \| base64 -d", script)
+    if written and "queue --json" in script:
+        # One script: the open-request check, then the write (as the real one runs).
+        queue_state = state.get("queue", {"ok": True, "pending": []})
+        if not isinstance(queue_state, dict):
+            ok({"exit_code": 5, "stdout": "", "stderr": "QUEUE-UNREADABLE"})
+        if queue_state.get("pending"):
+            ok({"exit_code": 4, "stdout": "", "stderr": "OPEN-REQUESTS"})
     if written:
         sha = hashlib.sha256(base64.b64decode(written.group(1))).hexdigest()
         state["remote_policy_sha"] = sha
         out = f"{sha}  /data/x/APPROVAL.md\n"
     elif "sha256sum" in script:
+        probe = state.get("probe")
+        if probe == "fail":
+            ok({"exit_code": 1, "stdout": "", "stderr": "exec failed"})
+        if probe == "garbage":
+            ok({"exit_code": 0, "stdout": "Permission denied\n", "stderr": ""})
         sha = state.get("remote_policy_sha")
-        out = f"{sha}  /data/x/APPROVAL.md\n" if sha else ""
+        out = f"{sha}  /data/x/APPROVAL.md\n" if sha else "ABSENT\n"
     elif "queue --json" in script:
         out = json.dumps(state.get("queue", {"ok": True, "pending": []}))
     elif "log verify" in script:
