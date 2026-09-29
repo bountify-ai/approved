@@ -1,0 +1,22 @@
+# Secrets and local state: never committed.
+.env
+.env.*
+!.env.example
+private/
+state/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+*.egg-info/
+dist/
+build/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
