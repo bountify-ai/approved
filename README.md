@@ -147,6 +147,7 @@ approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>
 | `demo/` | Compose stack, fake Telegram, scripted agent, demo policy, `smoke.sh` |
 | `Dockerfile` | The judge image for Maritime's GitHub source route (kept in step with `service/Dockerfile` by a test) |
 | `docs/demo-script.md` | A 90-second live demo script |
+| `docs/deploy-live.md` | Deploying the judge on Maritime beside a live daemon |
 
 ## Scope and non-goals
 
