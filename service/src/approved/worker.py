@@ -63,6 +63,10 @@ TERMINAL_EVENTS = frozenset(
 )
 
 MAX_BACKOFF_S = 60.0
+#: Follow failures retried at the plain poll interval before backoff grows. The facade is
+#: routinely unavailable for a moment while a hook call holds it, and backing off hard there
+#: lets requests be decided before the judge has read them.
+QUICK_RETRIES = 5
 SUMMARY_CHARS = 500
 POLICY_CONTEXT_LINES = 6
 
@@ -225,7 +229,8 @@ class Worker:
                 return EXIT_CHAIN_BREAK
             if result.error is not None:
                 self._failures += 1
-                delay = min(self.poll_interval_s * (2 ** (self._failures - 1)), MAX_BACKOFF_S)
+                growth = max(0, self._failures - QUICK_RETRIES)
+                delay = min(self.poll_interval_s * (2**growth), MAX_BACKOFF_S)
                 if once:
                     log("worker.stop", reason=result.error, metrics=METRICS.snapshot())
                     return EXIT_FOLLOW_ERROR
