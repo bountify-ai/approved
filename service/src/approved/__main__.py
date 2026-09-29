@@ -1,6 +1,8 @@
 """Command line.
 
 ``python -m approved worker [--once]``: run the advisory judge against one tenant facade.
+``python -m approved serve``: the worker plus the operator console (FastAPI on uvicorn), in
+one process. Refuses to start without CONSOLE_TOKEN(_FILE) unless APPROVED_DEMO=1.
 ``python -m approved evaluate [--offline] [--include-state DIR] [--limit N]``: score the judge
 against the seeded scenarios (and optionally recorded decisions); prints a JSON report.
 
@@ -14,6 +16,7 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
@@ -92,6 +95,59 @@ def build_worker(settings: Settings) -> Worker:
     )
 
 
+def serve() -> int:
+    """Worker loop on a thread, console on uvicorn in the main thread; one process."""
+    try:
+        settings = load_settings()
+    except ConfigError as exc:
+        log("config.error", level="error", detail=str(exc))
+        return EXIT_CONFIG
+    if settings.console_token is None and not settings.demo_mode:
+        log(
+            "config.error",
+            level="error",
+            detail="CONSOLE_TOKEN_FILE (preferred) or CONSOLE_TOKEN is required to serve the "
+            "console outside demo mode (APPROVED_DEMO=1)",
+        )
+        return EXIT_CONFIG
+    try:
+        worker = build_worker(settings)
+    except StateError as exc:
+        log("state.error", level="error", detail=str(exc))
+        return EXIT_STATE
+
+    import uvicorn
+
+    from .console.app import context_from_settings, create_app
+
+    app = create_app(context_from_settings(settings, worker.status.snapshot))
+    result: list[int] = []
+    thread = threading.Thread(target=lambda: result.append(worker.run()), name="worker")
+    thread.start()
+    log(
+        "console.start",
+        host=settings.console_host,
+        port=settings.console_port,
+        auth=settings.console_token is not None,
+        demo=settings.demo_mode,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=settings.console_host,
+            port=settings.console_port,
+            log_level="warning",
+            access_log=False,
+            proxy_headers=True,
+        )
+    )
+    server.run()  # returns on SIGTERM/SIGINT (uvicorn's handlers)
+    worker.stop()
+    thread.join(timeout=60)
+    log("console.stop")
+    return result[0] if result else 0
+
+
 def evaluate(args: argparse.Namespace) -> int:
     try:
         settings = load_inference_settings(offline=True if args.offline else None)
@@ -133,6 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     worker_cmd.add_argument(
         "--once", action="store_true", help="exit once the log is caught up (demos, cron)"
     )
+    sub.add_parser("serve", help="the worker plus the operator console, in one process")
     eval_cmd = sub.add_parser("evaluate", help="score the judge against expected decisions")
     eval_cmd.add_argument(
         "--offline", action="store_true", help="rules-based reviewer, no network, no Weave"
@@ -149,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "evaluate":
         return evaluate(args)
+    if args.command == "serve":
+        return serve()
 
     try:
         settings = load_settings()

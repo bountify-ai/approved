@@ -6,7 +6,7 @@ approval requests, you approve or reject them in a fake Telegram chat, and the A
 its advisory next to each prompt.
 
 ```sh
-make demo        # build, start, print the chat URL, then run the scripted agent
+make demo        # build, start, print the URLs, then run the scripted agent
 make demo-down   # remove the demo's containers, network and volumes
 make demo-smoke  # the same flow headless, with assertions (what CI runs)
 ```
@@ -21,7 +21,7 @@ in about 10 seconds.
 |---|---|
 | `daemon` | The hosted approval.md daemon image, vendored unchanged in [`images/daemon/`](../images/daemon/): `approval up`, the authenticated facade `approval serve`, and the Telegram channel in **webhook mode**. |
 | `fake-telegram` | [`fake-telegram/server.mjs`](fake-telegram/server.mjs): a fake Bot API with a chat page at <http://127.0.0.1:8090/>. The Approve and Reject buttons deliver the tap to the daemon's webhook as the demo approver (Telegram account 4242), with the secret the daemon registered, as Telegram would. |
-| `service` | The Approved judge worker. It follows the log with the TENANT credential and posts advisories through its own bot into the same chat. |
+| `service` | The Approved judge (`python -m approved serve`): the worker, which follows the log with the TENANT credential and posts advisories through its own bot into the same chat, plus the **operator console** at <http://127.0.0.1:8091/> in the same process. |
 | `agent` | [`agent/agent.py`](agent/agent.py), a one-shot scripted agent (compose profile `agent`). It posts Hermes-shaped hook envelopes to `/hook/hermes` with the AGENT credential and re-asks while the answer is `hook-timeout`, as the Hermes hook shim does. |
 | `init` | The demo init step (see below). |
 
@@ -37,10 +37,26 @@ The agent runs four scenarios under [`policy/APPROVAL.md`](policy/APPROVAL.md):
 The prompts arrive one at a time: the gate shows the next request after you answer the one
 in front of you.
 
+## The operator console
+
+<http://127.0.0.1:8091/> is the demo's control room:
+
+- `/`: the live tenant view: follow and chain health, open requests with the judge's verdict,
+  recent decisions labelled agree / disagree / escalated, and the running agreement,
+  false-READY and escalation counters. It reads the judge's state, never the facade.
+- `/policy`: the policy builder, with a "What the judge would say" panel (offline reviewer
+  only, so the public page can never spend a model call).
+- `/connect`: the connect bundle for a real tenant on Maritime (daemon plus gated Hermes, or
+  your own Hermes). It writes placeholders and a local credential generator, never a value.
+
+Sign in with the token in `demo/.state/console_token` (`cat` it; the console never displays
+it). `/policy` and `/health` are public.
+
 ## Credentials
 
 `make demo` generates fresh random credentials into `demo/.state/` (mode 0600, gitignored)
-on every run: the two serve credentials, the webhook secret, and two fake bot tokens. Each
+on every run: the two serve credentials, the webhook secret, two fake bot tokens and the
+console token. Each
 container gets only its own: the daemon holds both serve credentials, the judge holds the
 tenant credential and its bot token, and the agent holds the agent credential. None of them
 is a real credential, and only the fake Telegram ever sees a bot token.

@@ -105,6 +105,13 @@ class Settings(InferenceSettings):
     breaker_cooldown_s: PositiveFloat = 60.0
     feedback_timeout_s: PositiveFloat = 15.0
 
+    #: Operator console (``python -m approved serve``). The token gates every page except
+    #: /policy and /health; without one the console starts only in demo mode.
+    console_token: SecretStr | None = None
+    console_host: str = "0.0.0.0"  # noqa: S104 - a container's listener; the platform fronts it
+    console_port: Annotated[int, Field(gt=0, lt=65536)] = 8000
+    demo_mode: bool = False
+
     @property
     def telegram_enabled(self) -> bool:
         return self.tg_bot_token is not None and bool(self.tg_chat_id)
@@ -240,6 +247,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "tg_bot_token": _secret(environ, "TG_BOT_TOKEN"),
             "tg_chat_id": _clean(environ.get("TG_CHAT_ID")),
             "policy_file": Path(policy_file) if policy_file else None,
+            "console_token": _secret(environ, "CONSOLE_TOKEN"),
+            "demo_mode": _bool(environ, "APPROVED_DEMO"),
         }
     )
     _optional(
@@ -255,6 +264,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "breaker_threshold": "BREAKER_THRESHOLD",
             "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
             "feedback_timeout_s": "FEEDBACK_TIMEOUT_S",
+            "console_host": "CONSOLE_HOST",
+            # A platform-injected PORT wins over CONSOLE_PORT (see below).
+            "console_port": "CONSOLE_PORT",
         },
     )
+    _optional(environ, raw, {"console_port": "PORT"})
     return _validate(Settings, raw)

@@ -30,6 +30,8 @@ case "${1:-up}" in
     cat <<EOF
 
   Approver chat (fake Telegram):  http://127.0.0.1:${tg_port}/
+  Operator console:               http://127.0.0.1:${DEMO_CONSOLE_PORT:-8091}/
+    sign in with the token in demo/.state/console_token (cat it; it is never displayed)
 
   Open it, then run the agent:     make demo-agent
   Approve or reject each prompt in the page; the AI judge's advisory appears beside it.
