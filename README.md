@@ -18,6 +18,7 @@ make setup      # uv sync in service/
 make test       # pytest (network sockets disabled)
 make lint       # ruff check + ruff format --check
 make typecheck  # pyright
+make demo       # the whole flow locally in Docker, offline (see demo/README.md)
 ```
 
 License: MIT.

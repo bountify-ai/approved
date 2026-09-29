@@ -28,9 +28,9 @@ jobs:
       - name: Sync
         run: uv sync --locked
       - name: Lint
-        run: uv run ruff check .
+        run: uv run ruff check . ../demo/agent
       - name: Format
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . ../demo/agent
       - name: Typecheck
         run: uv run pyright
       - name: Test
@@ -39,3 +39,31 @@ jobs:
         env:
           WEAVE_DISABLED: "true"
         run: uv run python -m approved evaluate --offline
+
+  demo-smoke:
+    # The whole flow in Docker, offline: gate, judge, fake Telegram, scripted agent.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the daemon image (layer-cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: images/daemon
+          load: true
+          tags: approved-demo-daemon:local
+          cache-from: type=gha,scope=daemon
+          cache-to: type=gha,mode=max,scope=daemon
+      - name: Build the judge image (layer-cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: service
+          load: true
+          tags: approved-demo-service:local
+          cache-from: type=gha,scope=service
+          cache-to: type=gha,mode=max,scope=service
+      - name: Demo smoke
+        env:
+          SKIP_BUILD: "1"
+        run: bash demo/smoke.sh

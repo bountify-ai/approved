@@ -1,0 +1,3 @@
+# Build context: the entrypoint only (the runtime is fetched by commit inside the build).
+*
+!entrypoint.mjs
