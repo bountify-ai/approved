@@ -36,7 +36,7 @@ approved ask acme-hermes "push the README fix"   # prints the reply; exit 3 = wa
 approved status acme                             # machine, public /health, log verify head
 ```
 
-- `provision` creates the public daemon (`--framework custom --public --port 18789`), then
+- `provision` creates the public daemon (`--repo ... --branch main --public --port 18789`, Enter at the template prompt), then
   the optional gated Hermes and judge, reusing any machine that already exists. Credentials
   are generated into `./.approved/<tenant>/` (0700 dir, 0600 files) and reach a machine only
   through `maritime env import <agent> <file>`, never argv. It waits for `/health` 200 and an

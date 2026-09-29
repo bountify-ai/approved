@@ -35,7 +35,15 @@ class FakeMaritime:
         return [json.loads(x) for x in self.log_path.read_text().splitlines() if x]
 
     def argvs(self, verb: str | None = None) -> list[list[str]]:
-        return [c["argv"] for c in self.calls() if verb is None or c["argv"][0] == verb]
+        """Each call's argv without the leading global options (``--json``)."""
+        out = []
+        for call in self.calls():
+            argv = list(call["argv"])
+            while argv and argv[0] in ("--json", "--verbose"):
+                argv.pop(0)
+            if verb is None or (argv and argv[0] == verb):
+                out.append(argv)
+        return out
 
     @property
     def state(self) -> dict[str, Any]:
@@ -108,10 +116,10 @@ def test_provision_fresh_daemon(fake: FakeMaritime, tmp_path: Path) -> None:
     creates = fake.argvs("create")
     assert len(creates) == 1
     create = creates[0]
-    for flag in ("--repo", "--branch", "--framework", "--public", "--port", "--json"):
+    assert all(c["argv"][0] == "--json" for c in fake.calls())  # global, before the command
+    for flag in ("--repo", "--branch", "--public", "--port"):
         assert flag in create
     assert create[create.index("--port") + 1] == "18789"
-    assert create[create.index("--framework") + 1] == "custom"
     assert "--template" not in create
     pairs = [create[i + 1] for i, a in enumerate(create) if a == "-e"]
     assert "APPROVAL_TENANT=acme" in pairs
@@ -184,7 +192,7 @@ def test_provision_is_idempotent(fake: FakeMaritime, tmp_path: Path) -> None:
     lines: list[str] = []
     provision(Maritime(SecretGuard()), _opts(tmp_path, lines))
     again = fake.calls()[first:]
-    verbs = [c["argv"][0] for c in again]
+    verbs = [c["argv"][1] for c in again]
     assert "create" not in verbs
     assert "env" not in verbs
     assert "stop" not in verbs
@@ -376,3 +384,20 @@ def test_connect_writes_the_console_bundle(fake: FakeMaritime, tmp_path: Path, c
     assert re.search(r"\b[0-9a-f]{40,}\b", (out / "connect.sh").read_text()) is None
     assert main(["connect", "acme", "--facade-url", "https://api.maritime.sh/a/x"]) == 2
     assert fake.calls() == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["create", "acme-daemon", "--repo", "https://x.test", "--framework", "custom"],
+        ["exec", "--json", "acme-daemon", "--", "sh", "-c", "true"],
+        ["env", "import", "acme-daemon", "f.env", "--json"],
+        ["stop", "acme-daemon", "--force"],
+    ],
+)
+def test_fake_rejects_flags_the_real_cli_lacks(fake: FakeMaritime, args: list[str]) -> None:
+    """The fake mirrors `maritime <cmd> --help` (1.7.0), so every provision/ask/status test
+    above proves the CLI passes only flags that exist."""
+    with pytest.raises(MaritimeError) as info:
+        Maritime(SecretGuard()).run(args)
+    assert info.value.exit_code == 4

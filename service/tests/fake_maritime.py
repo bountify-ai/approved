@@ -46,7 +46,49 @@ def reply(content: str) -> str:
     return json.dumps({"http": 200, "body": json.dumps(body)})
 
 
+# Option lists copied from `maritime <cmd> --help` (maritime-cli 1.7.0). An option the real
+# CLI does not have is a usage error (exit 4), so a test proves we pass only real flags.
+GLOBAL = {"--json", "--verbose"}
+OPTIONS = {
+    "create": {
+        "-t",
+        "--template",
+        "-e",
+        "--env",
+        "--count",
+        "-r",
+        "--repo",
+        "-b",
+        "--branch",
+        "--public",
+        "--port",
+    },
+    "env import": {"--plain", "-r", "--reload"},
+    "exec": set(),
+    "stop": set(),
+    "start": set(),
+    "status": set(),
+    "list": set(),
+}
+while argv and argv[0] in GLOBAL:
+    argv.pop(0)
+if not argv:
+    fail(4, "usage")
 cmd = argv[0]
+key = "env import" if argv[:2] == ["env", "import"] else cmd
+if key not in OPTIONS:
+    fail(4, f"unknown command {key}")
+rest = argv[2:] if key == "env import" else argv[1:]
+if key == "exec":
+    rest = rest[: rest.index("--")] if "--" in rest else rest
+in_env_pairs = False
+for token in rest:
+    if token.startswith("-"):
+        if token not in OPTIONS[key]:
+            fail(4, f"unknown option {token} for {key}")
+        in_env_pairs = token in ("-e", "--env")
+    elif in_env_pairs and "=" not in token:
+        fail(4, f"-e expects KEY=value, got {token}")
 agents = state.setdefault("agents", [])
 find = {a["name"]: a for a in agents}
 

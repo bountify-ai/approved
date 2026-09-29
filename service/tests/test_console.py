@@ -378,10 +378,10 @@ def test_maritime_bundle_names_and_no_values() -> None:
         "APPROVAL_FACADE_TOKEN_ENV=HOSTED_ACME_CO_FACADE_AGENT_TOKEN",
         "HOSTED_ACME_CO_FACADE_AGENT_TOKEN=${agent}",
         "maritime create acme-co-daemon --repo https://github.com/bountify-ai/approval-md-hosted"
-        " --branch main --framework custom --public --port 18789",
+        " --branch main --public --port 18789",
         'maritime env import acme-co-daemon "$dir/daemon.env"',
         "maritime create acme-co-hermes --repo https://github.com/bountify-ai/approval-hermes-image"
-        " --branch main --framework custom",
+        " --branch main",
         'maritime env import acme-co-hermes "$dir/hermes.env"',
         "maritime stop acme-co-daemon && maritime start acme-co-daemon",
         "CONSOLE_TOKEN=${console_token}",
