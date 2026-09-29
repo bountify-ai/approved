@@ -1,0 +1,117 @@
+# The Approved demo: gate, AI judge and a fake Telegram, fully local.
+#
+# Run it with `make demo` (which generates fresh credentials into demo/.state/ first);
+# `make demo-down` removes this project's containers, network and volumes by name.
+#
+# Telegram runs in WEBHOOK mode: the daemon registers its webhook with the fake Bot API,
+# which delivers the demo approver's taps to the daemon's /telegram/webhook with the
+# secret the daemon registered, exactly as Telegram would.
+name: approved-demo
+
+x-daemon-image: &daemon-image
+  image: approved-demo-daemon:local
+  build:
+    context: ../images/daemon
+
+services:
+  fake-telegram:
+    image: node:22-bookworm-slim
+    command: ["node", "/app/server.mjs"]
+    volumes:
+      - ./fake-telegram:/app:ro
+    environment:
+      FAKE_TG_PORT: "8081"
+      DEMO_CHAT_ID: "4242"
+      DEMO_SENDER_ID: "4242"
+      FORWARD_WEBHOOK_URL: http://daemon:8080/telegram/webhook
+    ports:
+      - "127.0.0.1:${DEMO_TG_PORT:-8090}:8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # DEMO INIT STEP: seeds the store and attests the demo policy as human:demo.
+  # In production a human attests the policy themselves.
+  init:
+    <<: *daemon-image
+    entrypoint: ["sh", "/demo/init.sh"]
+    volumes:
+      - daemon-data:/data
+      - ./policy/APPROVAL.md:/demo/APPROVAL.md:ro
+      - ./init.sh:/demo/init.sh:ro
+
+  daemon:
+    <<: *daemon-image
+    env_file: .state/daemon.env
+    environment:
+      PORT: "8080"
+      APPROVAL_TENANT: demo
+      APPROVAL_AGENT: agent:hermes-demo
+      APPROVAL_DAEMON_ID: daemon-demo-1
+      APPROVAL_HUMAN: human:demo
+      HOSTED_DEMO_TG_CHAT: "4242"
+      APPROVAL_SERVE_HOOK_HARNESS_CAP: 300s
+      APPROVAL_SERVE_HOOK_TIMEOUT: 10s
+      APPROVAL_PUBLIC_URL: https://daemon.approved-demo.invalid
+      APPROVAL_IMAGE_TG_API_BASE: http://fake-telegram:8081
+      APPROVAL_TICK_CRON: "off"
+    volumes:
+      - daemon-data:/data
+    ports:
+      - "127.0.0.1:${DEMO_FACADE_PORT:-8088}:8080"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      fake-telegram:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>r.json()).then(b=>process.exit(b.facade==='listening'?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  service:
+    image: approved-demo-service:local
+    build:
+      context: ../service
+    command: ["worker"]
+    env_file: .state/judge.env
+    environment:
+      FACADE_URL: http://daemon:8080
+      TG_API_BASE: http://fake-telegram:8081
+      TG_CHAT_ID: "4242"
+      STATE_DIR: /state
+      POLL_INTERVAL_S: "1"
+      # Offline (rules-based reviewer, no network) unless `make demo` found W&B settings.
+      OFFLINE: ${APPROVED_OFFLINE:-1}
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      WANDB_ENTITY: ${WANDB_ENTITY:-}
+      WANDB_PROJECT: ${WANDB_PROJECT:-}
+      INFERENCE_API_KEY: ${INFERENCE_API_KEY:-}
+      REVIEWER_MODEL: ${REVIEWER_MODEL:-}
+    volumes:
+      - judge-state:/state
+    depends_on:
+      daemon:
+        condition: service_healthy
+
+  agent:
+    image: python:3.11-slim
+    profiles: ["agent"]
+    command: ["python", "-u", "/agent/agent.py"]
+    env_file: .state/agent.env
+    environment:
+      FACADE_URL: http://daemon:8080
+      AGENT_WAIT_S: ${AGENT_WAIT_S:-240}
+      AGENT_SCENARIOS: ${AGENT_SCENARIOS:-}
+    volumes:
+      - ./agent:/agent:ro
+    depends_on:
+      daemon:
+        condition: service_healthy
+
+volumes:
+  daemon-data:
+  judge-state:

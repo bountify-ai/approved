@@ -1,0 +1,2 @@
+# Lint the demo agent with the service rules.
+extend = "../service/pyproject.toml"
