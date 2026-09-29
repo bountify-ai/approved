@@ -39,6 +39,16 @@ jobs:
         env:
           WEAVE_DISABLED: "true"
         run: uv run python -m approved evaluate --offline
+      - name: Connect bundle (README command; local only)
+        run: uv run approved connect ci-tenant --facade-url https://facade.example.test --out "$RUNNER_TEMP/connect"
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Relative links and test references in the Markdown
+        run: python3 scripts/check_docs.py
 
   demo-smoke:
     # The whole flow in Docker, offline: gate, judge, fake Telegram, scripted agent.

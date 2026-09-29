@@ -1,7 +1,7 @@
 SERVICE := service
 UV := uv --directory $(SERVICE)
 
-.PHONY: setup test lint format typecheck check eval demo demo-agent demo-down demo-smoke cli-help
+.PHONY: setup test lint format typecheck check eval demo demo-agent demo-down demo-smoke cli-help docs-check
 
 setup:
 	$(UV) sync
@@ -21,6 +21,9 @@ typecheck:
 	$(UV) run pyright
 
 check: lint typecheck test
+
+docs-check:
+	python3 scripts/check_docs.py
 
 eval:
 	$(UV) run python -m approved evaluate --offline
