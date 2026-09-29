@@ -22,4 +22,28 @@ make demo       # the whole flow locally in Docker, offline (see demo/README.md)
                 # console: http://127.0.0.1:8091/  chat: http://127.0.0.1:8090/
 ```
 
+## Operator CLI
+
+`approved` (installed with the service; `uv run approved ...` from `service/`) drives Maritime
+through its `maritime` CLI. It shares one definition of every machine's environment with
+the console's connect page, so the two cannot disagree.
+
+```sh
+approved provision acme --policy APPROVAL.md --approver carter --tg-chat 4242 \
+    --tg-bot-token-file ~/secrets/acme-bot [--hermes --hermes-model gpt-5.4] [--judge]
+approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>   # your own Hermes
+approved ask acme-hermes "push the README fix"   # prints the reply; exit 3 = waiting for approval
+approved status acme                             # machine, public /health, log verify head
+```
+
+- `provision` creates the public daemon (`--repo ... --branch main --public --port 18789`, Enter at the template prompt), then
+  the optional gated Hermes and judge, reusing any machine that already exists. Credentials
+  are generated into `./.approved/<tenant>/` (0700 dir, 0600 files) and reach a machine only
+  through `maritime env import <agent> <file>`, never argv. It waits for `/health` 200 and an
+  unauthenticated `/status` 401, writes the policy and verifies its sha256 remotely, then
+  prints the attest command. **It never attests: a human does.**
+- Refused outright: the dogfood tenant, `approval-hermes*` and `approval-x16-*` machines.
+- `ask` runs detached inside the machine (the 120 s `exec` ceiling), polls, and on a timeout
+  prints the `--job` id to collect the answer later.
+
 License: MIT.

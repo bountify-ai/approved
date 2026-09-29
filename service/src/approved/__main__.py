@@ -3,6 +3,8 @@
 ``python -m approved worker [--once]``: run the advisory judge against one tenant facade.
 ``python -m approved serve``: the worker plus the operator console (FastAPI on uvicorn), in
 one process. Refuses to start without CONSOLE_TOKEN(_FILE) unless APPROVED_DEMO=1.
+``approved provision | connect | ask | status``: operator commands against Maritime (see
+``approved/ops/cli.py``).
 ``python -m approved evaluate [--offline] [--include-state DIR] [--limit N]``: score the judge
 against the seeded scenarios (and optionally recorded decisions); prints a JSON report.
 
@@ -190,6 +192,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--once", action="store_true", help="exit once the log is caught up (demos, cron)"
     )
     sub.add_parser("serve", help="the worker plus the operator console, in one process")
+    from .ops.cli import COMMANDS as OPS_COMMANDS
+    from .ops.cli import add_subcommands
+
+    add_subcommands(sub)
     eval_cmd = sub.add_parser("evaluate", help="score the judge against expected decisions")
     eval_cmd.add_argument(
         "--offline", action="store_true", help="rules-based reviewer, no network, no Weave"
@@ -208,6 +214,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return evaluate(args)
     if args.command == "serve":
         return serve()
+    if args.command in OPS_COMMANDS:
+        from .ops.cli import run as run_ops
+
+        return run_ops(args)
 
     try:
         settings = load_settings()
@@ -235,6 +245,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         judge_timeout_s=settings.judge_timeout_s,
     )
     return worker.run(once=args.once)
+
+
+def main_entry() -> None:
+    """Console-script entry point (``approved ...``)."""
+    sys.exit(main())
 
 
 if __name__ == "__main__":

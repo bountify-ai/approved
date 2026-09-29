@@ -4,6 +4,9 @@
 !.env.example
 private/
 state/
+# Operator CLI credentials (approved provision) and connect-bundle outputs
+.approved/
+approved-*/
 
 # Python
 __pycache__/
