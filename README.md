@@ -17,8 +17,9 @@ _Demo recording: placeholder._
 
 1. A scripted agent asks to run four commands. The read (`cat README.md`) runs at once.
 2. `git push origin main` is held. The approver's chat shows the gate's prompt with Approve and
-   Reject buttons, and right beside it: `Judge (advisory, AI): NEEDS_HUMAN, Push to the default
-   branch publishes the change; a human should confirm it.`
+   Reject buttons, and right beside it, from a separate judge bot: `🧑‍⚖️ Judge (advisory AI, not
+   an approval): NEEDS_HUMAN, Push to the default branch publishes the change; a human should
+   confirm it.`
 3. The branch push gets `READY`; the force push gets `NEEDS_HUMAN`. You tap Reject, Approve,
    Reject. The agent sees each decision.
 4. The operator console shows the three decisions labelled agree or escalated, the running
@@ -156,6 +157,12 @@ approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>
 - **No one-click provisioning.** Creating machines spends money and handles credentials, and
   attesting a policy is a human's statement about what an agent may do. `approved provision`
   does the mechanical steps, but a person runs it, and a person attests.
+- **The judge has its own bot.** It never holds the approval bot's token; the approver
+  `/start`s a second bot once, and its messages say "advisory AI, not an approval".
+- **The console is not for a shared origin in production.** On Maritime every public agent
+  shares `https://api.maritime.sh`, so any page there is same-origin with the console. Use it
+  there for demos only; in production give it its own domain, or run the judge with
+  `CONSOLE_ENABLED=0`. See [SECURITY.md](SECURITY.md).
 - **The judge never blocks.** It is advisory by design; see
   [ARCHITECTURE.md](ARCHITECTURE.md#why-the-judge-is-advisory).
 

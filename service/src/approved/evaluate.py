@@ -40,6 +40,7 @@ from .feedback import agreement, human_decision
 from .judge import CircuitBreaker, Judge
 from .reviewer import JudgeRequest
 from .state import STATE_FILENAME, JudgeState
+from .text import redact
 
 __all__ = [
     "DEFAULT_DATASET",
@@ -132,7 +133,7 @@ def scenarios_from_state(state_dir: Path) -> list[Scenario]:
                 id=f"state:{judged.seq}",
                 description=f"recorded decision at log seq {decision.seq}",
                 action_class=judged.action_class,
-                summary=judged.summary,
+                summary=redact(judged.summary) if judged.summary else None,
                 expected_human=human,  # type: ignore[arg-type]
             )
         )
@@ -216,9 +217,14 @@ def predict(judge: Judge, scenario: Scenario) -> Prediction:
     verdict = outcome.verdict
     return {
         "decision": verdict.decision.value if verdict else None,
-        "reason": verdict.reason() if verdict else None,
+        "reason": redact(verdict.reason()) if verdict else None,
         "absent_reason": outcome.absent_reason,
     }
+
+
+def dataset_rows(scenarios: Sequence[Scenario]) -> list[dict[str, Any]]:
+    """The rows published to Weave: every string redacted of token-shaped material."""
+    return [redact(s.model_dump(mode="json")) for s in scenarios]
 
 
 class EvalReport(BaseModel):
@@ -317,7 +323,7 @@ def run_weave(
     dataset = weave.Dataset(
         name=dataset_version,
         # weave converts a list of dicts to a Table at runtime (its documented form).
-        rows=[s.model_dump(mode="json") for s in scenarios],  # pyright: ignore[reportArgumentType]
+        rows=dataset_rows(scenarios),  # pyright: ignore[reportArgumentType]
     )
     evaluation = weave.Evaluation(
         name=EVALUATION_NAME,

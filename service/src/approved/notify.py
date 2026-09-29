@@ -13,6 +13,7 @@ class or the HTTP status and Telegram's numeric ``error_code``, nothing else.
 from __future__ import annotations
 
 import html
+import re
 from typing import Protocol
 
 import httpx
@@ -30,23 +31,34 @@ __all__ = [
     "format_chain_break",
 ]
 
-ADVISORY_PREFIX = "Judge (advisory, AI)"
+#: Unmistakably not the gate: the gate's prompts carry buttons and say APPROVAL REQUIRED.
+ADVISORY_PREFIX = "\U0001f9d1\u200d\u2696\ufe0f Judge (advisory AI, not an approval)"
+#: The only link an advisory may carry: a Weave call URL from our own formatter.
+_TRACE = re.compile(r"^https://wandb\.ai/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/r/call/[A-Za-z0-9-]+$")
 
 
 def format_advisory(verdict: Verdict, trace_url: str | None, action_class: str | None) -> str:
-    """``Judge (advisory, AI): NEEDS_HUMAN, <reason>. Trace: <url>`` plus the class line."""
+    """``<prefix>: NEEDS_HUMAN, <reason>. Trace: <url>`` plus the class line.
+
+    The reason is model text: URLs and /commands are replaced with ``[link removed]`` before
+    escaping. The trace link is ours and is dropped unless it is a wandb.ai call URL.
+    """
     reason = sanitize_for_telegram(verdict.reason()).rstrip(".")
-    trace = html.escape(trace_url, quote=False) if trace_url else "not traced (offline)"
+    trace = (
+        html.escape(trace_url, quote=False)
+        if trace_url and _TRACE.match(trace_url)
+        else "not traced (offline)"
+    )
     lines = [f"{ADVISORY_PREFIX}: {verdict.decision.value}, {reason}. Trace: {trace}"]
     if action_class:
-        lines.append(f"Request class: {sanitize_for_telegram(action_class, 80)}")
+        lines.append(f"Request class: {sanitize_for_telegram(action_class, 80, links=True)}")
     return "\n".join(lines)
 
 
 def format_chain_break(at_seq: int, reason: str) -> str:
     return (
         f"{ADVISORY_PREFIX}: halted. The approval log did not continue from where the judge "
-        f"left off (chain-break at seq {at_seq}, {sanitize_for_telegram(reason, 64)}). "
+        f"left off (chain-break at seq {at_seq}, {sanitize_for_telegram(reason, 64, links=True)}). "
         "No further advisories until an operator investigates. Your approvals are unaffected."
     )
 

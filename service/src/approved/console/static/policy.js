@@ -183,7 +183,8 @@
     });
     document.getElementById("preview-run").addEventListener("click", function () {
       var csrf = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
-      fetch("/api/preview", {
+      var base = (document.querySelector('meta[name="base-path"]') || {}).content || "";
+      fetch(base + "/api/preview", {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", "x-csrf-token": csrf },
@@ -195,7 +196,7 @@
           if (!res.ok) { result.textContent = "Preview refused: " + (res.body.detail || "error"); return; }
           var b = res.body;
           result.textContent =
-            "Judge (advisory, AI): " + b.decision + ", " + b.reason.replace(/\.$/, "") + ".\n" +
+            "\u{1F9D1}\u200D\u2696\uFE0F Judge (advisory AI, not an approval): " + b.decision + ", " + b.reason.replace(/\.$/, "") + ".\n" +
             "Request class: " + b.action_class + "\n\n" +
             "reviewer: " + b.reviewer + " (offline rules; the live judge uses W&B Inference)";
         })

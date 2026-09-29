@@ -74,7 +74,9 @@ SHIM_SHA256 = "b577532ac05689a67a47c4340f4f7846dc67b079c527859539954694874527bd"
 
 #: Secret references. The bundle's script defines a shell variable of each name; provision
 #: keeps a 0600 file per tenant holding each value.
-SecretRef = Literal["agent", "tenant_token", "webhook_secret", "console_token", "tg_bot_token"]
+SecretRef = Literal[
+    "agent", "tenant_token", "webhook_secret", "console_token", "tg_bot_token", "judge_bot_token"
+]
 GENERATED_SECRETS: tuple[SecretRef, ...] = (
     "agent",
     "tenant_token",
@@ -217,16 +219,29 @@ def hook_env(tenant: str, facade_url: str) -> list[EnvVar]:
     ]
 
 
-def judge_env(tenant: str, facade_url: str, tg_chat: str | None = None) -> list[EnvVar]:
-    """The Approved judge and console: the TENANT credential only, never the agent's."""
+def judge_env(
+    tenant: str, facade_url: str, tg_chat: str | None = None, base_path: str | None = None
+) -> list[EnvVar]:
+    """The Approved judge and console: the TENANT credential and the judge's OWN bot token.
+
+    Never the agent credential, and never the approval bot's token: the judge posts through a
+    second bot, which the approver must /start once so it may message them.
+    """
     return [
         EnvVar("FACADE_URL", facade_url),
         EnvVar("STATE_DIR", f"/data/judge-{tenant}"),
         EnvVar("OFFLINE", "1"),
+        EnvVar("TRUSTED_PROXY_HOPS", "1"),  # Maritime's public proxy appends X-Forwarded-For
+        # The console's public prefix on the shared Maritime origin: cookies are scoped to it.
+        EnvVar(
+            "PUBLIC_BASE_PATH",
+            base_path or "/a/<judge-agent-id>",
+            placeholder=base_path is None,
+        ),
         EnvVar("TG_CHAT_ID", tg_chat or "<your Telegram user id>", placeholder=tg_chat is None),
         EnvVar("TENANT_TOKEN", ref="tenant_token"),
         EnvVar("CONSOLE_TOKEN", ref="console_token"),
-        EnvVar("TG_BOT_TOKEN", ref="tg_bot_token"),
+        EnvVar("JUDGE_TG_BOT_TOKEN", ref="judge_bot_token"),
     ]
 
 
@@ -251,6 +266,8 @@ def create_argv(kind: Literal["daemon", "hermes", "judge"], agent: str) -> list[
 def _shell_value(var: EnvVar) -> str:
     if var.ref == "tg_bot_token":
         return "<your approval bot token, from @BotFather>"
+    if var.ref == "judge_bot_token":
+        return "<a SECOND bot's token for the judge; never the approval bot's>"
     if var.ref is not None:
         return "${" + var.ref + "}"
     return var.value
@@ -264,8 +281,7 @@ def _env_file(path: str, variables: list[EnvVar]) -> str:
 def _script(tenant: str, facade_url: str, approver: str, byo: bool) -> str:
     daemon_create = " ".join(create_argv("daemon", f"{tenant}-daemon"))
     hermes_create = " ".join(create_argv("hermes", f"{tenant}-hermes"))
-    judge_vars = [v for v in judge_env(tenant, facade_url) if v.ref != "tg_bot_token"]
-    judge_vars.append(EnvVar("TG_BOT_TOKEN", "<the judge's bot token>", placeholder=True))
+    judge_vars = judge_env(tenant, facade_url)
     harness = (
         "# The AGENT credential for YOUR Hermes. Put these lines in the environment Hermes\n"
         "# runs with (for example $HERMES_HOME/.env, which the gate treats as a credential).\n"
@@ -313,7 +329,9 @@ console_token="$(rand)"  # the Approved console's sign-in token
 
 {harness}
 
-# The Approved judge and console: the TENANT credential only. Never the agent credential.
+# The Approved judge and console: the TENANT credential and the judge's own bot token.
+# Never the agent credential, never the approval bot's token. Create a second bot with
+# @BotFather for the judge, and /start it from the approver's account so it may post there.
 {_env_file("judge.env", judge_vars)}
 chmod 600 "$dir"/*.env
 unset agent tenant_token webhook_secret console_token
@@ -349,6 +367,8 @@ def build_bundle(
         ]
         title = "Approved agent on Maritime"
     notes += [
+        "The judge posts through its own, second bot, never the approval bot: create one with "
+        "@BotFather and /start it from the approver's account.",
         "Env set after boot reaches running processes only after a restart: maritime stop, "
         "then maritime start, while no request is open.",
         "Attest the tenant's APPROVAL.md as the human approver before the gate will decide "

@@ -1,9 +1,15 @@
 """Console authentication and CSRF.
 
 * **Operator token.** One shared token (``CONSOLE_TOKEN`` / ``CONSOLE_TOKEN_FILE``). ``/login``
-  checks it in constant time and sets a session cookie whose value is an HMAC derived from the
-  token, never the token itself, so a leaked cookie does not reveal the credential and rotating
-  the token logs everyone out. ``HttpOnly``, ``SameSite=Strict``, ``Secure`` on https.
+  checks it in constant time and sets a session cookie ``<issued_at>.<HMAC(token, issued_at)>``:
+  never the token itself, expired server-side after 12 hours, and invalidated for everyone when
+  the token rotates. ``HttpOnly``, ``SameSite=Strict``, ``Secure`` (except in demo mode), and
+  ``Path`` scoped to the console's public prefix (``PUBLIC_BASE_PATH``).
+* **Shared origin.** On Maritime every public agent shares ``https://api.maritime.sh``; the
+  cookie ``Path`` keeps this console's cookies off other agents' paths, but cookies are not
+  an origin boundary: another agent's pages on the same origin can still send requests with
+  them. SameSite does not help within one site, so the CSRF token (below) is what protects
+  state-changing requests, and a console that matters belongs on its own origin.
 * **No token configured.** Only allowed in demo mode (``APPROVED_DEMO=1``); every page is then
   open and says so. ``serve`` refuses to start otherwise.
 * **CSRF.** Double-submit: a random ``approved_csrf`` cookie (``SameSite=Strict``) must match
@@ -14,7 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from fastapi import Request
 from pydantic import SecretStr
@@ -30,19 +41,78 @@ CSRF_COOKIE = "approved_csrf"
 SESSION_MAX_AGE_S = 12 * 3600
 
 
+FUTURE_SKEW_S = 60
+
+
+class SessionEpoch:
+    """A counter in ``STATE_DIR/console-epoch`` mixed into every session MAC. Signing out bumps
+    it, which revokes every session at once (there is one shared operator token, so there is
+    no per-user session to revoke)."""
+
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+
+    def get(self) -> int:
+        if self.path is None:
+            return 0
+        try:
+            text = self.path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            return 0
+        return int(text) if text.isdigit() else 0
+
+    def bump(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, str(self.get() + 1).encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, self.path)
+
+
 class ConsoleAuth:
-    def __init__(self, token: SecretStr | None, *, demo: bool) -> None:
+    def __init__(
+        self,
+        token: SecretStr | None,
+        *,
+        demo: bool,
+        base_path: str = "",
+        max_age_s: int = SESSION_MAX_AGE_S,
+        clock: Callable[[], float] = time.time,
+        epoch: SessionEpoch | None = None,
+    ) -> None:
+        self.epoch = epoch or SessionEpoch(None)
         self._token = token
         self.demo = demo
+        self.base_path = base_path
+        self.max_age_s = max_age_s
+        self._clock = clock
 
     @property
     def enabled(self) -> bool:
         return self._token is not None
 
-    def _session_value(self) -> str:
+    def cookie_options(self) -> dict[str, Any]:
+        """Cookie attributes for a shared origin (Maritime serves every public agent under
+        ``https://api.maritime.sh/a/<id>``): scoped to this console's own path prefix,
+        ``Secure`` unless demo mode, ``HttpOnly``, ``SameSite=Strict``."""
+        return {
+            "httponly": True,
+            "samesite": "strict",
+            "secure": not self.demo,
+            "path": self.base_path or "/",
+        }
+
+    def _mac(self, issued_at: int) -> str:
         assert self._token is not None
         key = self._token.get_secret_value().encode()
-        return hmac.new(key, b"approved-console-session-v1", hashlib.sha256).hexdigest()
+        message = f"approved-console-session-v3|{self.epoch.get()}|{issued_at}".encode()
+        return hmac.new(key, message, hashlib.sha256).hexdigest()
 
     def check_token(self, candidate: str) -> bool:
         if self._token is None:
@@ -50,13 +120,28 @@ class ConsoleAuth:
         return hmac.compare_digest(candidate.encode(), self._token.get_secret_value().encode())
 
     def session_cookie(self) -> str:
-        return self._session_value()
+        """``<issued_at>.<HMAC(token, issued_at)>``: expires server-side after ``max_age_s``,
+        and a rotated CONSOLE_TOKEN invalidates every session at once."""
+        issued = int(self._clock())
+        return f"{issued}.{self._mac(issued)}"
+
+    def revoke_all(self) -> None:
+        """Sign-out: bump the epoch, so every session cookie issued so far stops verifying."""
+        if self._token is not None:
+            self.epoch.bump()
 
     def is_authenticated(self, request: Request) -> bool:
         if self._token is None:
             return True  # demo mode without a token: open, and every page says so
         cookie = request.cookies.get(SESSION_COOKIE, "")
-        return hmac.compare_digest(cookie.encode(), self._session_value().encode())
+        issued_text, _, mac = cookie.partition(".")
+        if not issued_text.isdigit() or len(issued_text) > 12 or not mac:
+            return False
+        issued = int(issued_text)
+        if not hmac.compare_digest(mac.encode(), self._mac(issued).encode()):
+            return False
+        age = self._clock() - issued
+        return -FUTURE_SKEW_S <= age <= self.max_age_s
 
     # ------------------------------------------------------------------ CSRF
 

@@ -24,7 +24,7 @@ CONSOLE_TOKEN = "console-operator-token-7f3a9c1d2e4b"
 SECRETS = {
     "CONSOLE_TOKEN": CONSOLE_TOKEN,
     "TENANT_TOKEN": "tenant-credential-a1b2c3d4e5f60718",
-    "TG_BOT_TOKEN": "7002:judge-bot-secret-part-0011223344",
+    "JUDGE_TG_BOT_TOKEN": "7002:judge-bot-secret-part-0011223344",
     "WANDB_API_KEY": "wandb-key-value-99887766554433",
     "INFERENCE_API_KEY": "inference-key-value-1234567890ab",
 }
@@ -96,7 +96,7 @@ def _app(tmp_path: Path, *, token: bool = True, demo: bool = False, offline: boo
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     _seed_state(tmp_path)
-    with TestClient(_app(tmp_path), base_url="http://console.test") as c:
+    with TestClient(_app(tmp_path), base_url="https://console.test") as c:
         yield c
 
 
@@ -216,7 +216,7 @@ def test_session_cookie_is_not_the_token(client: TestClient) -> None:
 
 
 def test_forged_session_cookie_is_refused(tmp_path: Path) -> None:
-    with TestClient(_app(tmp_path)) as c:
+    with TestClient(_app(tmp_path), base_url="https://console.test") as c:
         c.cookies.set(SESSION_COOKIE, "0" * 64)
         assert c.get("/metrics").status_code == 401
 
@@ -289,7 +289,7 @@ def _every_response(c: TestClient) -> list[Any]:
 @pytest.mark.parametrize("offline", [True, False])
 def test_no_configured_secret_appears_in_any_response(tmp_path: Path, offline: bool) -> None:
     _seed_state(tmp_path)
-    with TestClient(_app(tmp_path, offline=offline)) as c:
+    with TestClient(_app(tmp_path, offline=offline), base_url="https://console.test") as c:
         responses = _every_response(c)
     assert all(r.status_code < 500 for r in responses)
     for response in responses:
@@ -312,7 +312,9 @@ def test_preview_runs_the_offline_reviewer_only(
 
     monkeypatch.setattr(reviewer_module.LiveReviewer, "__init__", forbidden)
     monkeypatch.setattr(reviewer_module.LiveReviewer, "review", forbidden)
-    with TestClient(_app(tmp_path, offline=False)) as c:  # the worker would be LIVE
+    with TestClient(
+        _app(tmp_path, offline=False), base_url="https://console.test"
+    ) as c:  # the worker would be LIVE
         csrf = _csrf(c)
         answer = c.post(
             "/api/preview",
@@ -392,7 +394,10 @@ def test_maritime_bundle_names_and_no_values() -> None:
         assert name in s, name
     judge = s[s.index('"$dir/judge.env"') :].split("EOF", 2)[1]
     assert "TENANT_TOKEN=${tenant_token}" in judge
-    assert "agent" not in judge.lower().replace("agent_token", "")  # no agent credential
+    assert "${agent}" not in judge  # no agent credential
+    assert "AGENT_TOKEN" not in judge
+    assert "TG_BOT_TOKEN=<your approval bot" not in judge  # never the gate's bot
+    assert "JUDGE_TG_BOT_TOKEN=<a SECOND bot" in judge
     _no_tokenish(s)
     assert b.hooks_yaml is None
 
@@ -473,3 +478,258 @@ def test_worker_follow_status(make_worker, facade) -> None:
     worker.run()
     assert worker.status.snapshot()["chain"] == "chain-break"
     assert FACADE_URL  # the fake facade the fixture used
+
+
+# ------------------------------------------------------------------ N2: judge silence
+
+
+def test_silence_is_recorded_and_shown(tmp_path: Path) -> None:
+    store = StateStore(tmp_path, "https://facade.test/a/demo")
+    store.settle("t", JudgedEntry(status="absent", seq=2, reason="timeout", action_class="x.y"))
+    store.record_decision("t", DecisionRecord(event="approval.granted", actor="h", seq=3, ts="t"))
+    store.record_decision(
+        "never", DecisionRecord(event="approval.rejected", actor="h", seq=4, ts="t")
+    )
+    store.save()
+    assert store.state.decisions["t"].advisory == "absent:timeout"
+    assert store.state.decisions["never"].advisory == "absent:not-seen"
+    assert store.state.judged["never"].reason == "not-seen"
+    status = {**STATUS, "breaker": "open"}
+    app = create_app(
+        context_from_settings(
+            load_settings(
+                {
+                    "FACADE_URL": "https://facade.test/a/demo",
+                    "TENANT_TOKEN": "t" * 24,
+                    "OFFLINE": "1",
+                    "STATE_DIR": str(tmp_path),
+                    "APPROVED_DEMO": "1",
+                }
+            ),
+            lambda: status,
+        )
+    )
+    with TestClient(app) as c:
+        page = c.get("/").text
+        metrics = c.get("/metrics").json()
+    assert "judge silent: breaker open" in page
+    assert "silent: timeout" in page
+    assert "silent: not-seen" in page
+    assert metrics["judge"]["silence"] == {"not-seen": 1, "timeout": 1}
+
+
+# ------------------------------------------------------------------ S2: cookies and sessions
+
+
+def _ctx_app(tmp_path: Path, auth: Any):
+    from approved.console.app import ConsoleContext
+
+    return create_app(
+        ConsoleContext(
+            auth=auth,
+            state_dir=tmp_path,
+            facade_url="https://facade.test",
+            follow_status=lambda: dict(STATUS),
+            mode="offline",
+        )
+    )
+
+
+def test_cookie_attributes_on_a_shared_origin(tmp_path: Path) -> None:
+    from pydantic import SecretStr
+
+    from approved.console.auth import ConsoleAuth
+
+    auth = ConsoleAuth(SecretStr(CONSOLE_TOKEN), demo=False, base_path="/a/agent-123")
+    with TestClient(_ctx_app(tmp_path, auth), base_url="https://api.maritime.test") as c:
+        page = c.get("/login")
+        csrf_cookie = page.headers["set-cookie"].lower()
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page.text)
+        assert csrf is not None
+        # The browser sends the path-scoped cookie to /a/agent-123/login; the platform's proxy
+        # strips the prefix, so the app sees /login with the cookie.
+        c.cookies.clear()
+        login = c.post(
+            "/login",
+            data={"token": CONSOLE_TOKEN, "csrf": csrf.group(1)},
+            headers={"cookie": f"{CSRF_COOKIE}={csrf.group(1)}"},
+            follow_redirects=False,
+        )
+    raw = login.headers["set-cookie"].lower()
+    for cookie in (raw, csrf_cookie):
+        assert "secure" in cookie
+        assert "httponly" in cookie
+        assert "samesite=strict" in cookie
+        assert "path=/a/agent-123" in cookie
+    assert login.headers["location"] == "/a/agent-123/"
+    assert 'href="/a/agent-123/static/console.css"' in page.text
+    assert 'action="/a/agent-123/login"' in page.text
+    assert '<meta name="base-path" content="/a/agent-123">' in page.text
+
+
+def test_demo_cookies_are_not_secure(tmp_path: Path) -> None:
+    with TestClient(_app(tmp_path, demo=True), base_url="http://127.0.0.1") as c:
+        cookie = c.get("/login").headers.get("set-cookie", "").lower()
+    assert "secure" not in cookie
+
+
+def test_sessions_expire_after_12_hours_and_on_token_rotation(tmp_path: Path) -> None:
+    from pydantic import SecretStr
+
+    from approved.console.auth import ConsoleAuth
+
+    now = [1_000_000.0]
+    auth = ConsoleAuth(SecretStr(CONSOLE_TOKEN), demo=False, clock=lambda: now[0])
+    with TestClient(_ctx_app(tmp_path, auth), base_url="https://console.test") as c:
+        _login(c)
+        assert c.get("/metrics").status_code == 200
+        issued, mac = c.cookies[SESSION_COOKIE].split(".")
+        assert issued == "1000000"
+        assert CONSOLE_TOKEN not in mac
+        now[0] += 12 * 3600 - 5
+        assert c.get("/metrics").status_code == 200
+        now[0] += 10
+        assert c.get("/metrics").status_code == 401  # expired server-side
+        c.cookies.set(SESSION_COOKIE, f"{int(now[0])}.{mac}")  # replayed MAC, new timestamp
+        assert c.get("/metrics").status_code == 401
+    rotated = ConsoleAuth(SecretStr("a-new-console-token-value"), demo=False, clock=lambda: now[0])
+    with TestClient(_ctx_app(tmp_path, rotated), base_url="https://console.test") as c:
+        c.cookies.set(SESSION_COOKIE, auth.session_cookie())
+        assert c.get("/metrics").status_code == 401
+
+
+# ------------------------------------------------------------------ S3: body limits, rate limit
+
+
+def test_declared_oversize_bodies_are_refused_before_reading(client: TestClient) -> None:
+    for path, limit in (("/login", 8 * 1024), ("/logout", 8 * 1024), ("/api/preview", 16 * 1024)):
+        answer = client.post(path, content=b"x" * (limit + 1))
+        assert answer.status_code == 413, path
+
+
+def test_undeclared_oversize_bodies_are_cut_off_while_streaming(client: TestClient) -> None:
+    def chunks():
+        for _ in range(40):
+            yield b"y" * 1024
+
+    answer = client.post("/api/preview", content=chunks())  # chunked: no Content-Length
+    assert answer.status_code == 413
+
+
+def test_public_posts_are_rate_limited_per_client(tmp_path: Path) -> None:
+    from approved.console.limits import RateLimiter
+
+    settings = load_settings(
+        {
+            "FACADE_URL": "https://f.test",
+            "TENANT_TOKEN": "t" * 24,
+            "OFFLINE": "1",
+            "STATE_DIR": str(tmp_path),
+            "CONSOLE_TOKEN": CONSOLE_TOKEN,
+        }
+    )
+    app = create_app(
+        context_from_settings(settings, lambda: dict(STATUS)), rate_limiter=RateLimiter(limit=5)
+    )
+    with TestClient(app, base_url="https://console.test") as c:
+        csrf = _csrf(c)
+        codes = [
+            c.post(
+                "/api/preview",
+                json={"action_class": "a.b", "command": "x"},
+                headers={"x-csrf-token": csrf},
+            ).status_code
+            for _ in range(7)
+        ]
+    assert codes[:5] == [200] * 5
+    assert codes[5:] == [429, 429]
+
+
+# ------------------------------------------------------------------ S2(b,c): console off, no-store
+
+
+def test_console_can_be_turned_off_leaving_health(tmp_path: Path) -> None:
+    settings = load_settings(
+        {
+            "FACADE_URL": "https://f.test",
+            "TENANT_TOKEN": "t" * 24,
+            "OFFLINE": "1",
+            "STATE_DIR": str(tmp_path),
+            "CONSOLE_ENABLED": "0",
+        }
+    )
+    assert settings.console_enabled is False
+    app = create_app(context_from_settings(settings, lambda: dict(STATUS)), console=False)
+    with TestClient(app, base_url="https://console.test") as c:
+        assert c.get("/health").status_code == 200
+        for path in ("/", "/policy", "/connect", "/login", "/metrics", "/static/console.css"):
+            assert c.get(path).status_code == 404, path
+
+
+def test_console_is_on_by_default(tmp_path: Path) -> None:
+    env = {"FACADE_URL": "https://f.test", "TENANT_TOKEN": "t" * 24, "OFFLINE": "1"}
+    assert load_settings(env).console_enabled is True
+
+
+def test_sensitive_pages_are_not_cached(client: TestClient) -> None:
+    _login(client)
+    for path in ("/", "/connect", "/partials/live", "/metrics"):
+        assert client.get(path).headers["cache-control"] == "no-store", path
+
+
+# ------------------------------------------------------------------ rate limit: no lockout
+
+
+def _limited_app(tmp_path: Path, hops: int = 0):
+    from approved.console.limits import RateLimiter
+
+    settings = load_settings(
+        {
+            "FACADE_URL": "https://f.test",
+            "TENANT_TOKEN": "t" * 24,
+            "OFFLINE": "1",
+            "STATE_DIR": str(tmp_path),
+            "CONSOLE_TOKEN": CONSOLE_TOKEN,
+            "TRUSTED_PROXY_HOPS": str(hops),
+        }
+    )
+    return create_app(
+        context_from_settings(settings, lambda: dict(STATUS)), rate_limiter=RateLimiter(limit=3)
+    )
+
+
+def _try(c: TestClient, token: str, xff: str | None = None) -> int:
+    csrf = _csrf(c, "/login") if CSRF_COOKIE not in c.cookies else c.cookies[CSRF_COOKIE]
+    headers = {"x-forwarded-for": xff} if xff else {}
+    return c.post(
+        "/login", data={"token": token, "csrf": csrf}, headers=headers, follow_redirects=False
+    ).status_code
+
+
+def test_failed_logins_are_limited_but_the_valid_token_never_is(tmp_path: Path) -> None:
+    with TestClient(_limited_app(tmp_path), base_url="https://console.test") as c:
+        codes = [_try(c, "wrong") for _ in range(5)]
+        assert codes == [401, 401, 401, 429, 429]
+        assert _try(c, CONSOLE_TOKEN) == 303  # the flood never locks the operator out
+
+
+def test_trusted_hop_keys_the_limit_by_forwarded_client(tmp_path: Path) -> None:
+    with TestClient(_limited_app(tmp_path, hops=1), base_url="https://console.test") as c:
+        assert [_try(c, "wrong", "6.6.6.6, 10.0.0.1") for _ in range(4)][-1] == 429
+        # The rightmost hop is what our proxy saw; a spoofed left entry changes nothing.
+        assert _try(c, "wrong", "1.2.3.4, 10.0.0.1") == 429
+        assert _try(c, "wrong", "10.0.0.2") == 401  # another client behind the proxy
+    with TestClient(_limited_app(tmp_path, hops=0), base_url="https://console.test") as c:
+        codes = [_try(c, "wrong", f"9.9.9.{i}") for i in range(4)]
+        assert codes[-1] == 429  # untrusted header ignored: keyed by the socket peer
+
+
+def test_logout_revokes_the_session_server_side(client: TestClient) -> None:
+    _login(client)
+    old = client.cookies[SESSION_COOKIE]
+    client.post("/logout", data={"csrf": client.cookies[CSRF_COOKIE]}, follow_redirects=False)
+    client.cookies.set(SESSION_COOKIE, old)  # a copy of the cookie kept from before sign-out
+    assert client.get("/metrics").status_code == 401
+    client.cookies.clear()
+    _login(client)  # a fresh sign-in works again
+    assert client.get("/metrics").status_code == 200

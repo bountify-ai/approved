@@ -22,6 +22,7 @@ from approved.ops.provision import ProvisionError, ProvisionOptions, attest_comm
 FAKE = Path(__file__).with_name("fake_maritime.py")
 POLICY = b'# Policy\n\n```yaml approval-policy\nversion: "0.1"\n```\n'
 BOT_TOKEN = "7001:real-looking-bot-token-value-abcdef"
+JUDGE_BOT = "7002:the-judges-own-bot-token-value-12345"
 
 
 @dataclass
@@ -84,12 +85,15 @@ def _opts(tmp_path: Path, lines: list[str], **kw: Any) -> ProvisionOptions:
     token_file = tmp_path / "bot-token"
     token_file.write_text(BOT_TOKEN + "\n")
     token_file.chmod(0o600)
+    judge_file = tmp_path / "judge-bot-token"
+    judge_file.write_text(JUDGE_BOT + "\n")
     defaults: dict[str, Any] = {
         "tenant": "acme",
         "policy": policy,
         "approver": "carter",
         "tg_chat": "4242",
         "tg_bot_token_file": token_file,
+        "judge_bot_token_file": judge_file,
         "credentials_root": tmp_path / ".approved",
         "wait_s": 5,
         "poll_s": 0,
@@ -153,7 +157,8 @@ def test_no_token_value_on_any_argv_stdin_or_output(fake: FakeMaritime, tmp_path
     provision(Maritime(SecretGuard()), _opts(tmp_path, lines, hermes=True, judge=True))
     secrets = _secret_values(tmp_path / ".approved" / "acme")
     assert BOT_TOKEN in secrets
-    assert len(secrets) == 5
+    assert JUDGE_BOT in secrets
+    assert len(secrets) == 6
     everything = json.dumps(fake.calls()) + "\n".join(lines)
     for value in secrets:
         assert value not in everything
@@ -179,7 +184,14 @@ def test_hermes_and_judge_get_only_their_own_credentials(
     )
     env = fake.state["env"]
     assert env["acme-hermes"] == ["HOSTED_ACME_FACADE_AGENT_TOKEN"]
-    assert set(env["acme-judge"]) == {"TENANT_TOKEN", "CONSOLE_TOKEN", "TG_BOT_TOKEN"}
+    assert set(env["acme-judge"]) == {
+        "TENANT_TOKEN",
+        "CONSOLE_TOKEN",
+        "JUDGE_TG_BOT_TOKEN",
+        "PUBLIC_BASE_PATH",
+    }
+    judge_file = (tmp_path / ".approved" / "acme" / "acme-judge.env").read_text()
+    assert "PUBLIC_BASE_PATH=/a/id-acme-judge" in judge_file
     hermes_create = next(a for a in fake.argvs("create") if a[1] == "acme-hermes")
     assert "--public" not in hermes_create
     assert "APPROVAL_HERMES_MODEL=gpt-5.4" in hermes_create
@@ -336,7 +348,7 @@ def test_ask_prompt_cannot_break_out_of_the_script(fake: FakeMaritime, capsys) -
 def test_ask_rejects_a_bad_job_id(fake: FakeMaritime) -> None:
     fake.set(agents=[{"id": "i", "name": "acme-hermes"}])
     assert main(["ask", "acme-hermes", "--job", "../../etc"]) == 2
-    assert fake.calls() == []
+    assert fake.argvs("exec") == []
 
 
 # ------------------------------------------------------------------ status, connect
@@ -409,3 +421,186 @@ def test_fake_accepts_json_after_exec_like_the_real_cli(fake: FakeMaritime) -> N
         ["exec", "--json", "acme-daemon", "--", "sh", "-c", "true"]
     )
     assert result["exit_code"] == 0
+
+
+# ------------------------------------------------------------------ B1: the judge's own bot
+
+
+def test_judge_env_file_never_holds_the_gate_bot_value(fake: FakeMaritime, tmp_path: Path) -> None:
+    provision(Maritime(SecretGuard()), _opts(tmp_path, [], judge=True))
+    judge_env_file = (tmp_path / ".approved" / "acme" / "acme-judge.env").read_text()
+    assert f"JUDGE_TG_BOT_TOKEN={JUDGE_BOT}" in judge_env_file
+    assert BOT_TOKEN not in judge_env_file
+    assert BOT_TOKEN.split(":")[1] not in judge_env_file
+    assert "HOSTED_ACME_TG_BOT_TOKEN" not in judge_env_file
+
+
+def test_judge_without_its_own_bot_is_refused_before_any_call(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    with pytest.raises(ProvisionError, match="own bot"):
+        provision(
+            Maritime(SecretGuard()), _opts(tmp_path, [], judge=True, judge_bot_token_file=None)
+        )
+    assert fake.calls() == []
+
+
+def test_judge_bot_equal_to_the_gate_bot_is_refused(fake: FakeMaritime, tmp_path: Path) -> None:
+    same = tmp_path / "same-bot"
+    same.write_text(BOT_TOKEN)
+    lines: list[str] = []
+    with pytest.raises(ProvisionError, match="approval bot's token") as info:
+        provision(
+            Maritime(SecretGuard()), _opts(tmp_path, lines, judge=True, judge_bot_token_file=same)
+        )
+    assert BOT_TOKEN not in str(info.value)
+    assert fake.calls() == []
+
+
+def test_bundle_judge_env_has_no_gate_bot_reference() -> None:
+    from approved.console.bundle import judge_env
+
+    refs = {v.ref for v in judge_env("acme", "https://f.test")}
+    assert "tg_bot_token" not in refs
+    assert "judge_bot_token" in refs
+    assert not any(v.name == "TG_BOT_TOKEN" for v in judge_env("acme", "https://f.test"))
+
+
+# ------------------------------------------------------------------ B2: never rewrite silently
+
+
+def _reused_with_other_policy(fake: FakeMaritime, tmp_path: Path) -> None:
+    provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    fake.set(remote_policy_sha="f" * 64)  # someone attested a different policy since
+
+
+def _policy_writes(fake: FakeMaritime) -> int:
+    return sum("base64 -d" in json.dumps(a) for a in fake.argvs("exec"))
+
+
+def test_reused_daemon_policy_is_never_rewritten(fake: FakeMaritime, tmp_path: Path) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    before = _policy_writes(fake)
+    with pytest.raises(ProvisionError, match="different policy") as info:
+        provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    assert "f" * 64 in str(info.value)
+    assert "--replace-policy" in str(info.value)
+    assert _policy_writes(fake) == before
+
+
+def test_replace_policy_refuses_while_a_request_is_open(fake: FakeMaritime, tmp_path: Path) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    fake.set(queue={"ok": True, "pending": [{"action_key": "k"}]})
+    with pytest.raises(ProvisionError, match="open approval requests"):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+    assert fake.state["remote_policy_sha"] == "f" * 64  # the one script refused to write
+
+
+def test_replace_policy_refuses_when_the_queue_is_unreadable(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    fake.set(queue="not a queue")
+    with pytest.raises(ProvisionError, match="could not be read"):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+
+
+def test_replace_policy_writes_and_asks_for_reattestation(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    lines: list[str] = []
+    provision(Maritime(SecretGuard()), _opts(tmp_path, lines, replace_policy=True))
+    assert any("re-)attested" in line for line in lines)
+    assert fake.state["remote_policy_sha"] != "f" * 64
+
+
+# ------------------------------------------------------------------ S6: resolved names
+
+
+@pytest.mark.parametrize("typed", ["  Approval-Hermes-Gated ", "APPROVAL-X16-HERMES", "My-DogFood"])
+def test_protected_names_are_normalised(typed: str) -> None:
+    assert is_protected(typed)
+
+
+def test_an_id_resolving_to_a_protected_machine_is_refused(fake: FakeMaritime, capsys) -> None:
+    fake.set(agents=[{"id": "ag-7f3", "name": "approval-hermes-gated"}])
+    assert main(["ask", "ag-7f3", "hello"]) == 2
+    assert "approval-hermes-gated" in capsys.readouterr().out
+    assert fake.argvs("exec") == []  # resolved, refused, nothing run
+
+
+def test_a_configured_protected_id_is_refused(
+    fake: FakeMaritime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APPROVED_PROTECTED_AGENT_IDS", "ag-dog-1")
+    fake.set(agents=[{"id": "ag-dog-1", "name": "innocent-looking"}])
+    assert main(["ask", "innocent-looking", "hello"]) == 2
+    assert fake.argvs("exec") == []
+
+
+# ------------------------------------------------------------------ S6: nested, fail closed
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"result": {"agent": {"name": "approval-hermes-gated", "id": "a1"}}},
+        {"ok": True, "result": {"id": "x", "agent": {"agentName": "approval-x16-hermes"}}},
+        {"agent": {"id": "a1"}, "aliases": [{"name": "my-dogfood"}]},
+    ],
+)
+def test_nested_protected_identities_are_refused(fake: FakeMaritime, answer: dict) -> None:
+    fake.set(agents=[{"id": "a1", "name": "acme-hermes"}], status_override={"acme-hermes": answer})
+    assert main(["ask", "acme-hermes", "hello"]) == 2
+    assert fake.argvs("exec") == []
+
+
+@pytest.mark.parametrize("answer", [{}, {"ok": True}, {"result": {"status": "running"}}])
+def test_unidentifiable_targets_fail_closed(fake: FakeMaritime, answer: dict) -> None:
+    fake.set(agents=[{"id": "a1", "name": "acme-hermes"}], status_override={"acme-hermes": answer})
+    assert main(["ask", "acme-hermes", "hello"]) == 2
+    assert main(["status", "acme"]) in (0, 2)  # daemon absent here; never an exec
+    assert fake.argvs("exec") == []
+
+
+def test_create_output_naming_a_protected_machine_is_refused(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    fake.set(
+        create_override={
+            "acme-daemon": {"created": [{"agent": {"name": "approval-dogfood", "id": "z"}}]}
+        }
+    )
+    with pytest.raises(ProtectedName):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    assert fake.argvs("env") == []  # refused before any credential was imported
+
+
+# ------------------------------------------------------------------ B2: probe and TOCTOU
+
+
+@pytest.mark.parametrize("probe", ["fail", "garbage"])
+def test_an_unreadable_policy_probe_stops_without_writing(
+    fake: FakeMaritime, tmp_path: Path, probe: str
+) -> None:
+    provision(Maritime(SecretGuard()), _opts(tmp_path, []))
+    fake.set(probe=probe)
+    before = _policy_writes(fake)
+    with pytest.raises(ProvisionError, match="could not read"):
+        provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+    assert _policy_writes(fake) == before
+
+
+def test_replace_checks_the_queue_and_writes_in_one_exec(
+    fake: FakeMaritime, tmp_path: Path
+) -> None:
+    _reused_with_other_policy(fake, tmp_path)
+    provision(Maritime(SecretGuard()), _opts(tmp_path, [], replace_policy=True))
+    [write] = [a for a in fake.argvs("exec") if "base64 -d" in json.dumps(a)][-1:]
+    script = write[write.index("--") + 3]
+    assert script.index("queue --json") < script.index("base64 -d")  # check, then write
+    assert not any(
+        "queue --json" in json.dumps(a) and "base64 -d" not in json.dumps(a)
+        for a in fake.argvs("exec")
+    )  # no separate check-then-write pair

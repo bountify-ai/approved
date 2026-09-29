@@ -14,10 +14,13 @@ tool and must never be able to act as the agent it comments on.
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, TypeVar
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
@@ -42,6 +45,19 @@ AGENT_CREDENTIAL_ENV_NAMES: tuple[str, ...] = (
     "APPROVAL_SERVE_AGENT_TOKEN",
     "AGENT_TOKEN",
     "APPROVAL_AGENT_TOKEN",
+)
+#: Patterns for the same credential under the names the connect bundle and the gated Hermes
+#: image use (``HOSTED_<TENANT>_FACADE_AGENT_TOKEN``, ``APPROVAL_FACADE_TOKEN_ENV`` and kin),
+#: and for the approval bot's token (``HOSTED_<TENANT>_TG_BOT_TOKEN``, core's
+#: ``APPROVAL_TG_TOKEN``): the judge posts through its OWN bot and must never hold the gate's.
+_FORBIDDEN_ENV_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^HOSTED_[A-Z0-9_]+_FACADE_AGENT_TOKEN(_FILE)?$"), "agent credential"),
+    (re.compile(r"^APPROVAL_FACADE_TOKEN"), "agent credential"),
+    (re.compile(r"^HOSTED_[A-Z0-9_]+_TG_BOT_TOKEN(_FILE)?$"), "approval bot token"),
+    (re.compile(r"^APPROVAL_TG_TOKEN(_FILE)?$"), "approval bot token"),
+    # The judge's own bot is JUDGE_TG_BOT_TOKEN. The plain legacy name is refused outright:
+    # it is ambiguous, and an operator who set it most likely copied the gate's bot.
+    (re.compile(r"^TG_BOT_TOKEN(_FILE)?$"), "approval bot token (legacy name TG_BOT_TOKEN)"),
 )
 
 _M = TypeVar("_M", bound=BaseModel)
@@ -90,7 +106,7 @@ class Settings(InferenceSettings):
     facade_url: str
     tenant_token: SecretStr
 
-    tg_bot_token: SecretStr | None = None
+    judge_bot_token: SecretStr | None = None
     tg_chat_id: str | None = None
     tg_api_base: str = "https://api.telegram.org"
 
@@ -114,10 +130,18 @@ class Settings(InferenceSettings):
     console_host: str = "0.0.0.0"  # noqa: S104 - a container's listener; the platform fronts it
     console_port: Annotated[int, Field(gt=0, lt=65536)] = 8000
     demo_mode: bool = False
+    #: Serve the operator console beside the worker. Off: only /health is served.
+    console_enabled: bool = True
+    #: Proxies in front of the console that append to X-Forwarded-For (Maritime's public
+    #: proxy: 1). 0 uses the socket peer. Only hops we trust are read, from the right.
+    trusted_proxy_hops: Annotated[int, Field(ge=0, le=5)] = 0
+    #: The path prefix a shared-origin proxy puts in front of the console (Maritime:
+    #: ``/a/<agent-id>``). Links and the session cookie's ``Path`` carry it.
+    public_base_path: Annotated[str, Field(pattern=r"^(/[A-Za-z0-9._~-]+)*$")] = ""
 
     @property
     def telegram_enabled(self) -> bool:
-        return self.tg_bot_token is not None and bool(self.tg_chat_id)
+        return self.judge_bot_token is not None and bool(self.tg_chat_id)
 
 
 def _clean(value: str | None) -> str | None:
@@ -157,6 +181,7 @@ def _number(env: Mapping[str, str], name: str) -> str | None:
 
 
 def _refuse_agent_credential(environ: Mapping[str, str]) -> None:
+    """Refuse to start with the agent credential or the approval bot's token in reach."""
     present = [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(n))]
     present += [n for n in AGENT_CREDENTIAL_ENV_NAMES if _clean(environ.get(f"{n}_FILE"))]
     if present:
@@ -165,6 +190,36 @@ def _refuse_agent_credential(environ: Mapping[str, str]) -> None:
             f"({', '.join(sorted(set(present)))}); the judge holds the TENANT credential "
             "only. Remove it from this process's environment."
         )
+    for name, value in environ.items():
+        if not _clean(value):
+            continue
+        for pattern, what in _FORBIDDEN_ENV_PATTERNS:
+            if pattern.search(name):
+                raise ConfigError(
+                    f"the judge's environment carries the {what} ({name}); the judge holds the "
+                    "TENANT credential and its own bot token (JUDGE_TG_BOT_TOKEN) only."
+                )
+
+
+def _facade_url_allowed(url: str, *, demo: bool, allow_insecure: bool) -> bool:
+    """https always; http only in demo mode, on loopback, or, with ALLOW_INSECURE_FACADE=1, to
+    a single-label host (a compose service name)."""
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return bool(parts.hostname)
+    if parts.scheme != "http" or not parts.hostname:
+        return False
+    if demo:
+        return True
+    host = parts.hostname
+    if host == "localhost":
+        return True
+    if "." not in host and ":" not in host:
+        return allow_insecure  # a single-label name (a compose service): opt-in only
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _inference_fields(environ: Mapping[str, str], *, offline: bool) -> dict[str, object]:
@@ -234,8 +289,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     facade_url = _clean(environ.get("FACADE_URL"))
     if facade_url is None:
         raise ConfigError("FACADE_URL is required")
-    if not facade_url.startswith(("https://", "http://")):
-        raise ConfigError("FACADE_URL must be an http(s) URL")
+    demo = _bool(environ, "APPROVED_DEMO")
+    allow_insecure = _bool(environ, "ALLOW_INSECURE_FACADE")
+    if not _facade_url_allowed(facade_url, demo=demo, allow_insecure=allow_insecure):
+        raise ConfigError(
+            "FACADE_URL must be https (http only for loopback, APPROVED_DEMO=1, or a "
+            "single-label host with ALLOW_INSECURE_FACADE=1): the tenant credential and the "
+            "log travel on it"
+        )
 
     tenant_token = _secret(environ, "TENANT_TOKEN")
     if tenant_token is None:
@@ -247,11 +308,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         {
             "facade_url": facade_url.rstrip("/"),
             "tenant_token": tenant_token,
-            "tg_bot_token": _secret(environ, "TG_BOT_TOKEN"),
+            "judge_bot_token": _secret(environ, "JUDGE_TG_BOT_TOKEN"),
             "tg_chat_id": _clean(environ.get("TG_CHAT_ID")),
             "policy_file": Path(policy_file) if policy_file else None,
             "console_token": _secret(environ, "CONSOLE_TOKEN"),
-            "demo_mode": _bool(environ, "APPROVED_DEMO"),
+            "demo_mode": demo,
+            "console_enabled": _clean(environ.get("CONSOLE_ENABLED")) is None
+            or _bool(environ, "CONSOLE_ENABLED"),
+            "public_base_path": _clean(environ.get("PUBLIC_BASE_PATH")) or "",
         }
     )
     _optional(
@@ -268,6 +332,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
             "feedback_timeout_s": "FEEDBACK_TIMEOUT_S",
             "console_host": "CONSOLE_HOST",
+            "trusted_proxy_hops": "TRUSTED_PROXY_HOPS",
             # A platform-injected PORT wins over CONSOLE_PORT (see below).
             "console_port": "CONSOLE_PORT",
         },

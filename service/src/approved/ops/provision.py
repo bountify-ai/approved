@@ -44,7 +44,7 @@ from ..console.bundle import (
 )
 from .credentials import CredentialDir
 from .maritime import Maritime, MaritimeError, agent_id
-from .names import refuse_protected
+from .names import identities, refuse_any_protected, refuse_protected
 
 __all__ = [
     "APPROVAL_CLI",
@@ -70,6 +70,8 @@ class ProvisionOptions:
     approver: str = "operator"
     tg_chat: str | None = None
     tg_bot_token_file: Path | None = None
+    judge_bot_token_file: Path | None = None
+    replace_policy: bool = False
     hermes: bool = False
     hermes_model: str | None = None
     hermes_provider: str | None = None
@@ -143,6 +145,8 @@ class _Provisioner:
         self.say(f"{name}: creating ({' '.join(argv[:3])} ...)")
         created = self.m.create(argv)
         self.o.created.append(name)
+        if identities(created):  # whatever create says it made must not be protected
+            refuse_any_protected(created, what=name)
         nested = created.get("agent")
         agent: dict[str, Any] = nested if isinstance(nested, dict) else created
         found = self.m.find(name) or agent
@@ -175,31 +179,88 @@ class _Provisioner:
             f"(/health 200: {health_ok}, /status 401: {status_ok})"
         )
 
-    def write_policy(self, daemon: str, tenant: str, policy: bytes) -> str:
-        local_sha = hashlib.sha256(policy).hexdigest()
+    def probe_policy(self, daemon: str, tenant: str) -> str | None:
+        """The store policy's sha256, ``None`` if there is no policy file. Anything else (an
+        exec failure, an unreadable file, output that does not parse) raises: never a guess."""
         store = f"/data/{tenant}"
-        probe = self.m.exec(daemon, f"sha256sum {store}/APPROVAL.md 2>/dev/null || true\n")
-        match = _SHA_LINE.match(probe.stdout.strip())
-        if match and match.group(1) == local_sha:
+        probe = self.m.exec(
+            daemon,
+            f"if [ -f {store}/APPROVAL.md ]; then sha256sum {store}/APPROVAL.md || echo UNREADABLE;"
+            " else echo ABSENT; fi\n",
+        )
+        text = probe.stdout.strip()
+        if probe.exit_code == 0 and text == "ABSENT":
+            return None
+        match = _SHA_LINE.match(text)
+        if probe.exit_code != 0 or match is None:
+            raise ProvisionError(
+                f"could not read {daemon}'s current policy hash; nothing was written"
+            )
+        return match.group(1)
+
+    def write_policy(
+        self, daemon: str, tenant: str, policy: bytes, *, reused: bool, replace: bool
+    ) -> tuple[str, bool]:
+        """Put the policy in the store. Returns (sha256, written).
+
+        On a REUSED daemon an existing, different policy is never overwritten unless
+        ``--replace-policy`` is given, and then the open-request check and the write run in ONE
+        exec script (``approval queue --json`` must show nothing pending, or nothing is
+        written), so no request can open between the check and the write. After the write the
+        policy is unattested until the human re-attests, and core runs an unattested policy
+        manual-only: the window fails safe, it does not fail open.
+        """
+        local_sha = hashlib.sha256(policy).hexdigest()
+        remote_sha = self.probe_policy(daemon, tenant)
+        if remote_sha == local_sha:
             self.say(f"policy already in place (sha256 {local_sha[:12]}...)")
-            return local_sha
+            return local_sha, False
+        check_queue = reused and remote_sha is not None
+        if check_queue and not replace:
+            raise ProvisionError(
+                f"{daemon} already holds a different policy (remote sha256 {remote_sha}, "
+                f"local {local_sha}). Nothing was written. To replace it, confirm no "
+                "approval request is open and re-run with --replace-policy; the approver "
+                "must then re-attest."
+            )
         encoded = base64.b64encode(policy).decode("ascii")
+        store = f"/data/{tenant}"
+        guard = (
+            'q="$(node "$APPROVAL_CLI" queue --json)" || { echo QUEUE-UNREADABLE >&2; exit 5; }\n'
+            "node -e 'const q=JSON.parse(process.argv[1]);"
+            'process.exit(Array.isArray(q.pending)&&q.pending.length===0?0:4)\' "$q" '
+            "|| { echo OPEN-REQUESTS >&2; exit 4; }\n"
+            if check_queue
+            else ""
+        )
         script = (
             "set -eu\n"
             f"d={store}\n"
             'test -d "$d" || { echo "store $d missing: has the daemon booted?" >&2; exit 3; }\n'
-            f"printf %s '{encoded}' | base64 -d > \"$d/.APPROVAL.md.approved-tmp\"\n"
+            'cd "$d"\n'
+            + guard
+            + f"printf %s '{encoded}' | base64 -d > \"$d/.APPROVAL.md.approved-tmp\"\n"
             'mv "$d/.APPROVAL.md.approved-tmp" "$d/APPROVAL.md"\n'
             'sha256sum "$d/APPROVAL.md"\n'
         )
         result = self.m.exec(daemon, script)
+        if result.exit_code == 4:
+            raise ProvisionError(
+                f"not replacing the policy: {daemon} has open approval requests. Decide them or "
+                "let them expire first. Nothing was written."
+            )
+        if result.exit_code == 5:
+            raise ProvisionError(
+                f"not replacing the policy: {daemon}'s queue could not be read. Nothing was "
+                "written."
+            )
         remote = _SHA_LINE.match(result.stdout.strip())
         if result.exit_code != 0 or remote is None:
             raise ProvisionError(f"writing the policy failed (exit {result.exit_code})")
         if remote.group(1) != local_sha:
             raise ProvisionError("the policy's remote sha256 does not match the local file")
         self.say(f"policy written and verified remotely (sha256 {local_sha[:12]}...)")
-        return local_sha
+        return local_sha, True
 
 
 def provision(maritime: Maritime, opts: ProvisionOptions) -> dict[str, Any]:
@@ -212,8 +273,35 @@ def provision(maritime: Maritime, opts: ProvisionOptions) -> dict[str, Any]:
     if not policy.strip() or len(policy) > MAX_POLICY_BYTES:
         raise ProvisionError("the policy file is empty or larger than 48 KiB")
 
+    judge_bot: str | None = None
+    if opts.judge:
+        # The judge posts through its OWN bot. It must never hold the approval bot's token:
+        # that token can send prompts and, with the webhook, stands for the gate's channel.
+        if opts.judge_bot_token_file is None:
+            raise ProvisionError(
+                "--judge needs --judge-bot-token-file: the judge posts through its own bot "
+                "(create a second bot with @BotFather; the approver must /start it)"
+            )
+        judge_bot = opts.judge_bot_token_file.read_text(encoding="utf-8").strip()
+        if not judge_bot:
+            raise ProvisionError("--judge-bot-token-file is empty")
+
     creds = CredentialDir(opts.credentials_root, tenant)
+    gate_bot = (
+        opts.tg_bot_token_file.read_text(encoding="utf-8").strip()
+        if opts.tg_bot_token_file is not None
+        else (creds.get("tg_bot_token") if creds.path.exists() else None)
+    )
+    if judge_bot is not None and gate_bot is not None and judge_bot == gate_bot:
+        raise ProvisionError(
+            "the judge bot token file holds the approval bot's token; the judge needs its own "
+            "bot (compared locally; neither value is printed)"
+        )
     agents = {a.get("name"): a for a in maritime.list_agents()}
+    for name in (daemon, hermes, judge):
+        found = agents.get(name)
+        if found is not None:  # reuse only what does not resolve to a protected machine
+            refuse_any_protected(found, what=name)
     wanted = [daemon] + ([hermes] if opts.hermes else []) + ([judge] if opts.judge else [])
     if any(n in agents for n in wanted) and not creds.exists:
         raise ProvisionError(
@@ -221,8 +309,10 @@ def provision(maritime: Maritime, opts: ProvisionOptions) -> dict[str, Any]:
             "refusing to reuse a machine whose credentials this CLI does not have"
         )
     creds.ensure()
-    if opts.tg_bot_token_file is not None:
-        creds.store("tg_bot_token", opts.tg_bot_token_file.read_text(encoding="utf-8"))
+    if opts.tg_bot_token_file is not None and gate_bot:
+        creds.store("tg_bot_token", gate_bot)
+    if judge_bot is not None:
+        creds.store("judge_bot_token", judge_bot)
     maritime.guard.add(*creds.values())
     p = _Provisioner(maritime, opts, creds)
 
@@ -262,15 +352,29 @@ def provision(maritime: Maritime, opts: ProvisionOptions) -> dict[str, Any]:
     if opts.judge:
         j_vars = judge_env(tenant, base, opts.tg_chat)
         j_secret = [v for v in j_vars if v.ref is not None]
-        p.ensure_machine("judge", judge, j_vars, lambda _a: j_secret, existing=agents.get(judge))
+
+        def judge_imports(agent: dict[str, Any]) -> list[EnvVar]:
+            ident = agent_id(agent)
+            base_path = [EnvVar("PUBLIC_BASE_PATH", f"/a/{ident}")] if ident else []
+            return [*j_secret, *base_path]
+
+        p.ensure_machine("judge", judge, j_vars, judge_imports, existing=agents.get(judge))
 
     p.wait_for_facade(base)
     try:
-        sha = p.write_policy(daemon, tenant, policy)
+        sha, written = p.write_policy(
+            daemon,
+            tenant,
+            policy,
+            reused=daemon not in opts.created,
+            replace=opts.replace_policy,
+        )
     except MaritimeError as exc:
         raise ProvisionError(f"policy write over maritime exec failed: {exc}") from None
 
     p.say("")
+    if written:
+        p.say("The policy changed, so it must be (re-)attested before the gate uses it.")
     p.say("Next, as the human approver (this CLI never attests):")
     p.say(f"  {attest_command(daemon, tenant, approver)}")
     p.say(f"Credentials: {creds.path}/ (0600). Tenant env prefix: {env_prefix(tenant)}")

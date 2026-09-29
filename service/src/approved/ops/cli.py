@@ -43,6 +43,17 @@ def add_subcommands(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     p.add_argument("--hermes-base-url", default=None)
     p.add_argument("--hermes-key-env", default=None)
     p.add_argument("--judge", action="store_true", help="also create the Approved judge")
+    p.add_argument(
+        "--judge-bot-token-file",
+        type=Path,
+        default=None,
+        help="the judge's OWN bot token (a second bot, never the approval bot); needed by --judge",
+    )
+    p.add_argument(
+        "--replace-policy",
+        action="store_true",
+        help="overwrite a different policy on an existing daemon (only with no open request)",
+    )
     p.add_argument("--credentials", type=Path, default=Path(".approved"))
     p.add_argument("--wait-s", type=float, default=300.0)
 
@@ -122,6 +133,8 @@ def run(args: argparse.Namespace) -> int:
                     hermes_base_url=args.hermes_base_url,
                     hermes_key_env=args.hermes_key_env,
                     judge=args.judge,
+                    judge_bot_token_file=args.judge_bot_token_file,
+                    replace_policy=args.replace_policy,
                     credentials_root=args.credentials,
                     wait_s=args.wait_s,
                 ),

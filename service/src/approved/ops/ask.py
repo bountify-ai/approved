@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .maritime import Maritime, MaritimeError
-from .names import refuse_protected
+from .names import resolve_target
 
 __all__ = ["AskOutcome", "ask", "gateway_script", "job_dir"]
 
@@ -109,7 +109,8 @@ def ask(
     out: Callable[[str], None] = print,
     sleep: Callable[[float], None] = time.sleep,
 ) -> AskOutcome:
-    refuse_protected(agent)
+    resolve_target(maritime, agent)
+    agent = agent.strip()
     if job is None:
         if not prompt or len(prompt) > MAX_PROMPT:
             raise ValueError(f"the prompt must be 1 to {MAX_PROMPT} characters")

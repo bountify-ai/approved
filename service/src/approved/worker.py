@@ -25,6 +25,7 @@ a page that was not verified.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
@@ -38,7 +39,7 @@ from .judge import Judge, JudgeOutcome
 from .logs import METRICS, log
 from .notify import Notifier, format_advisory, format_chain_break
 from .reviewer import JudgeRequest
-from .state import Cursor, DecisionRecord, JudgedEntry, StateStore
+from .state import Cursor, DecisionRecord, JudgedEntry, StateStore, UnverifiableRecord
 
 __all__ = [
     "EXIT_CHAIN_BREAK",
@@ -102,6 +103,8 @@ class FollowStatus:
             "head_seq": 0,
             "caught_up": False,
             "pages": 0,
+            "breaker": "closed",
+            "follow_failures": 0,
         }
 
     def update(self, **fields: Any) -> None:
@@ -172,6 +175,7 @@ class Worker:
         policy_file: Path | None = None,
         on_decision: DecisionHook = _noop_hook,
         on_idle: Callable[[], object] = _noop,
+        on_shutdown: Callable[[], object] = _noop,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.facade = facade
@@ -184,6 +188,7 @@ class Worker:
         self.policy_file = policy_file
         self.on_decision = on_decision
         self.on_idle = on_idle
+        self.on_shutdown = on_shutdown
         self._clock = clock
         self._stop = threading.Event()
         self.status = FollowStatus(clock)
@@ -220,6 +225,8 @@ class Worker:
             return self._loop(once=once)
         finally:
             self.status.update(running=False)
+            with contextlib.suppress(Exception):
+                self.on_shutdown()
 
     def _loop(self, *, once: bool) -> int:
         self._idle()
@@ -227,8 +234,10 @@ class Worker:
             result = self.step()
             if result.chain_break:
                 return EXIT_CHAIN_BREAK
+            self.status.update(breaker=self.judge.breaker.state)
             if result.error is not None:
                 self._failures += 1
+                self.status.update(follow_failures=self._failures)
                 growth = max(0, self._failures - QUICK_RETRIES)
                 delay = min(self.poll_interval_s * (2**growth), MAX_BACKOFF_S)
                 if once:
@@ -237,6 +246,7 @@ class Worker:
                 self._stop.wait(delay)
                 continue
             self._failures = 0
+            self.status.update(follow_failures=0)
             if result.caught_up:
                 self._idle()
                 if once:
@@ -277,14 +287,20 @@ class Worker:
             return StepResult(caught_up=False, records=0, error="follow")
 
         decided_later = {
-            r.action_key for r in page.records if r.event in TERMINAL_EVENTS and r.action_key
+            r.action_key
+            for r in page.records
+            if r.event in TERMINAL_EVENTS and r.action_key and r.seq not in page.unverifiable
         }
         for record in page.records:
             if self._stop.is_set() and record.event == REQUEST_EVENT:
                 # Stop before starting a new judgement; the cursor stays before this record.
                 self.store.save()
                 return StepResult(caught_up=False, records=0)
-            self._handle(record, decided_later)
+            reason = page.unverifiable.get(record.seq)
+            if reason is not None:
+                self._on_unverifiable(record, reason)
+            else:
+                self._handle(record, decided_later)
             # Track progress in memory: every save inside the page (each claim and settle)
             # then persists how far it got, and a crash replays only records after that save,
             # which are idempotent.
@@ -425,6 +441,23 @@ class Worker:
         except Exception as exc:  # noqa: BLE001 - a feedback hook never stops the loop
             METRICS.incr("decision.hook_failed")
             log("decision.hook-failed", level="warning", error=type(exc).__name__)
+
+    def _on_unverifiable(self, record: LogRecord, reason: str) -> None:
+        """Links held, content did not verify: never judged, surfaced, and followed past."""
+        METRICS.incr("follow.record_unverifiable")
+        log(
+            "record-unverifiable",
+            level="warning",
+            seq=record.seq,
+            record_event=record.event,
+            reason=reason,
+            action_key=record.action_key,
+        )
+        self.store.note_unverifiable(
+            UnverifiableRecord(
+                seq=record.seq, event=record.event, reason=reason, action_key=record.action_key
+            )
+        )
 
     # ------------------------------------------------------------------ chain break
 

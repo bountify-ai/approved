@@ -16,7 +16,7 @@ BASE = {"FACADE_URL": "https://facade.test/a/t", "TENANT_TOKEN": "t" * 24, "OFFL
 
 
 def _set_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
-    for name in (*BASE, "STATE_DIR", "TG_BOT_TOKEN", *AGENT_CREDENTIAL_ENV_NAMES):
+    for name in (*BASE, "STATE_DIR", "JUDGE_TG_BOT_TOKEN", *AGENT_CREDENTIAL_ENV_NAMES):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -40,7 +40,7 @@ def test_offline_wiring(tmp_path: Path) -> None:
     assert isinstance(worker.notifier, NullNotifier)
     with_tg = build_worker(
         load_settings(
-            {**BASE, "STATE_DIR": str(tmp_path), "TG_BOT_TOKEN": "1:x", "TG_CHAT_ID": "9"}
+            {**BASE, "STATE_DIR": str(tmp_path), "JUDGE_TG_BOT_TOKEN": "1:x", "TG_CHAT_ID": "9"}
         )
     )
     assert isinstance(with_tg.notifier, TelegramNotifier)

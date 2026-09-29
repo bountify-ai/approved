@@ -72,7 +72,12 @@ import json, os, sys, time, urllib.request
 
 port, agent_pid, log_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 decide = {"push-main": "r", "push-branch": "g", "force-push": "r"}
+klass = {"push-main": "vcs.push.main", "push-branch": "vcs.push.branch",
+         "force-push": "vcs.history.rewrite"}
 tapped = set()
+tapped_classes = []
+first_seen = {}
+ADVISORY_WAIT_S = 90  # an approver reads the advisory before tapping; bounded
 deadline = time.time() + 240
 log = open(log_path, "w")
 
@@ -99,6 +104,18 @@ while time.time() < deadline and alive(agent_pid):
         scenario = next((s for s in decide if f"-{s}:" in header), None)
         if scenario is None:
             continue
+        # Tap once the judge's advisory for this request is in the chat, as an approver
+        # would. The facade answers one call at a time and is busy while a hook call waits,
+        # so the judge reads a request when that wait ends; tapping first would decide it
+        # unread (recorded as absent:already-decided, which the assertions below would catch).
+        first_seen.setdefault(message["message_id"], time.time())
+        advised = sum(
+            1 for m in messages
+            if "Judge (advisory AI" in m["text"] and m["text"].endswith(klass[scenario])
+        )
+        needed = 1 + sum(1 for t in tapped_classes if t == scenario)
+        if advised < needed and time.time() - first_seen[message["message_id"]] < ADVISORY_WAIT_S:
+            continue
         want = decide[scenario]
         button = next(b for b in message["buttons"] if b["data"].startswith(want + ":"))
         body = json.dumps({"message_id": message["message_id"], "data": button["data"]}).encode()
@@ -109,6 +126,7 @@ while time.time() < deadline and alive(agent_pid):
         with urllib.request.urlopen(req, timeout=15) as r:
             answer = json.load(r)
         tapped.add(message["message_id"])
+        tapped_classes.append(scenario)
         print(f"tap {scenario} -> {'approve' if want == 'g' else 'reject'} {answer}", file=log, flush=True)
     time.sleep(0.5)
 PY
@@ -140,7 +158,7 @@ chat = json.load(open(sys.argv[2]))["messages"]
 state = json.load(open(sys.argv[3]))
 requests = [r for r in log if r["event"] == "approval.requested"]
 decided = {r["action_key"]: r["event"] for r in log if r["event"] in ("approval.granted", "approval.rejected")}
-advisories = [m for m in chat if m["text"].startswith("Judge (advisory, AI)")]
+advisories = [m for m in chat if "Judge (advisory AI, not an approval)" in m["text"]]
 by_class = {}
 for m in advisories:
     klass = m["text"].rsplit("Request class: ", 1)[-1]
@@ -202,6 +220,20 @@ while IFS='=' read -r name value; do
   if printf '%s' "$logs" | grep -qF -- "$secret"; then leaked="$leaked $name"; fi
 done < <(cat "$here/.state/daemon.env" "$here/.state/judge.env" "$here/.state/agent.env")
 [ -z "$leaked" ] && ok "no generated credential appears in any container's log" || no "leaked:${leaked}"
+
+# A real W&B key, when the operator's shell has one (live mode), may reach only the judge
+# service, through its environment. `docker inspect` of every other container must not hold it.
+if [ -n "${WANDB_API_KEY:-}" ]; then
+  holders=""
+  for id in $("${compose[@]}" ps -aq); do
+    name="$(docker inspect -f '{{.Name}}' "$id")"
+    case "$name" in *-service-*) continue ;; esac
+    if docker inspect "$id" | grep -qF -- "$WANDB_API_KEY"; then holders="$holders $name"; fi
+  done
+  [ -z "$holders" ] && ok "the W&B key is in no container but the judge's" || no "W&B key visible in:${holders}"
+else
+  printf '  NOTE  WANDB_API_KEY unset: offline run, no W&B key to look for\n'
+fi
 
 elapsed=$(($(date +%s) - started))
 printf '\n== summary: %s passed, %s failed, %ss\n' "$pass" "$fail" "$elapsed"

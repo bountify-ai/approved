@@ -11,7 +11,7 @@ import httpx
 
 from ..console.bundle import validate_tenant
 from .maritime import Maritime, MaritimeError, agent_id
-from .names import refuse_protected
+from .names import refuse_protected, resolve_target
 from .provision import public_url_of
 
 __all__ = ["status"]
@@ -27,15 +27,15 @@ def status(
     tenant = validate_tenant(tenant)
     daemon = f"{tenant}-daemon"
     refuse_protected(tenant)
-    refuse_protected(daemon)
     report: dict[str, Any] = {"daemon": daemon}
 
     agent = maritime.find(daemon)
     if agent is None:
+        refuse_protected(daemon)
         out(f"{daemon}: not found")
         report["machine"] = "missing"
         return report
-    detail = maritime.status(daemon)
+    detail = resolve_target(maritime, daemon)
     state = next(
         (detail.get(k) for k in ("status", "state") if isinstance(detail.get(k), str)), "unknown"
     )

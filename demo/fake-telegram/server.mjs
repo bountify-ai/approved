@@ -157,7 +157,7 @@ async function refresh(){
   if (!data.messages.length){ chat.innerHTML = '<p class="empty">Waiting for the first message&hellip;</p>'; return; }
   for (const m of data.messages){
     const div = document.createElement("div");
-    const judge = m.text.startsWith("Judge (advisory, AI)");
+    const judge = m.text.includes("Judge (advisory AI");
     div.className = "msg" + (judge ? " judge" : "");
     const meta = document.createElement("div"); meta.className = "meta";
     meta.textContent = (judge ? "AI judge (advisory)" : "approval gate") + " \\u00b7 #" + m.message_id + (m.edited ? " \\u00b7 edited" : "");

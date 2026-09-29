@@ -22,6 +22,7 @@ view calls the facade. No CORS middleware is installed, so browsers apply same-o
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import resources
@@ -39,8 +40,9 @@ from starlette.responses import Response
 from ..config import Settings
 from ..logs import METRICS
 from ..reviewer import JudgeRequest, OfflineReviewer
-from .auth import CSRF_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE_S, ConsoleAuth
+from .auth import CSRF_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE_S, ConsoleAuth, SessionEpoch
 from .bundle import BundleError, build_bundle
+from .limits import RateLimiter, RequestGuard, client_ip
 from .live import load_view
 from .pages import connect_page, live_fragment, live_page, login_page, policy_page
 
@@ -66,6 +68,7 @@ class ConsoleContext:
     facade_url: str
     follow_status: Callable[[], dict[str, Any]]
     mode: str  # "offline" | "live"
+    trusted_proxy_hops: int = 0
 
     @property
     def facade_host(self) -> str:
@@ -77,11 +80,17 @@ def context_from_settings(
 ) -> ConsoleContext:
     """The console's view of the settings: the console token and non-secret fields only."""
     return ConsoleContext(
-        auth=ConsoleAuth(settings.console_token, demo=settings.demo_mode),
+        auth=ConsoleAuth(
+            settings.console_token,
+            demo=settings.demo_mode,
+            base_path=settings.public_base_path,
+            epoch=SessionEpoch(Path(settings.state_dir) / "console-epoch"),
+        ),
         state_dir=settings.state_dir,
         facade_url=settings.facade_url,
         follow_status=follow_status,
         mode="offline" if settings.offline else "live",
+        trusted_proxy_hops=settings.trusted_proxy_hops,
     )
 
 
@@ -102,6 +111,20 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         return response
 
 
+_OWN_LINK = re.compile(r'((?:href|src|action)=")/(?!/)')
+
+
+def rebase(html: str, base: str) -> str:
+    """Prefix this console's own absolute links with its public base path (``/a/<id>`` on a
+    shared Maritime origin). External links (``https://...``) are untouched."""
+    if not base:
+        return html
+    html = html.replace(
+        '<meta name="base-path" content="">', f'<meta name="base-path" content="{base}">'
+    )
+    return _OWN_LINK.sub(lambda m: m.group(1) + base + "/", html)
+
+
 def _demo_note(ctx: ConsoleContext) -> str | None:
     if not ctx.auth.demo:
         return None
@@ -118,24 +141,27 @@ async def _form(request: Request) -> dict[str, str]:
     return {k: v[0] for k, v in parsed.items() if v}
 
 
-def create_app(ctx: ConsoleContext) -> FastAPI:
+def create_app(
+    ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None, console: bool = True
+) -> FastAPI:
     app = FastAPI(title="Approved console", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(_SecurityHeaders)
+    limiter = rate_limiter or RateLimiter()
+    app.add_middleware(RequestGuard, rate=limiter, trusted_proxy_hops=ctx.trusted_proxy_hops)
     static_dir = resources.files("approved.console").joinpath("static")
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     shim = resources.files("approved.console").joinpath("downloads", "hermes-hook-shim.sh")
 
+    base = ctx.auth.base_path
+
+    def redirect(path: str) -> RedirectResponse:
+        return RedirectResponse(base + path, status_code=303)
+
     def html(request: Request, content: str, csrf: tuple[str, bool], status: int = 200):
-        response = HTMLResponse(content, status_code=status)
+        response = HTMLResponse(rebase(content, base), status_code=status)
         token, fresh = csrf
         if fresh:
             response.set_cookie(
-                CSRF_COOKIE,
-                token,
-                httponly=True,
-                samesite="strict",
-                secure=request.url.scheme == "https",
-                max_age=SESSION_MAX_AGE_S,
+                CSRF_COOKIE, token, max_age=SESSION_MAX_AGE_S, **ctx.auth.cookie_options()
             )
         return response
 
@@ -146,12 +172,21 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
     # ------------------------------------------------------------ public
 
     @app.get("/health")
-    def health() -> dict[str, Any]:
+    def health() -> JSONResponse:
         status = ctx.follow_status()
-        return {
-            "status": "ok",
-            "worker": {"running": bool(status.get("running")), "chain": status.get("chain")},
-        }
+        worker = {"running": bool(status.get("running")), "chain": status.get("chain")}
+        if status.get("degraded"):
+            reason = str(status.get("degraded_reason") or "worker-stopped")
+            return JSONResponse(
+                {"status": "degraded", "reason": reason, "worker": worker}, status_code=503
+            )
+        return JSONResponse({"status": "ok", "worker": worker})
+
+    if not console:
+        # CONSOLE_ENABLED=0: the judge runs headless; only the platform's /health remains.
+        return app
+
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     @app.get("/policy", response_class=HTMLResponse)
     def policy(request: Request) -> Response:
@@ -203,7 +238,7 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request) -> Response:
         if not ctx.auth.enabled or ctx.auth.is_authenticated(request):
-            return RedirectResponse("/", status_code=303)
+            return redirect("/")
         csrf = ctx.auth.csrf_for(request)
         return html(request, login_page(csrf=csrf[0], error=None, demo_note=_demo_note(ctx)), csrf)
 
@@ -216,16 +251,18 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
             return html(request, page, csrf, status=403)
         if not ctx.auth.check_token(form.get("token", "").strip()):
             METRICS.incr("console.login_failed")
+            # Only FAILED sign-ins count toward the limit; the valid token always gets in.
+            if not limiter.allow(client_ip(request.scope, ctx.trusted_proxy_hops)):
+                page = login_page(csrf=csrf[0], error="Too many failed attempts.", demo_note=None)
+                return html(request, page, csrf, status=429)
             page = login_page(csrf=csrf[0], error="That token is not right.", demo_note=None)
             return html(request, page, csrf, status=401)
-        response = RedirectResponse("/", status_code=303)
+        response = redirect("/")
         response.set_cookie(
             SESSION_COOKIE,
             ctx.auth.session_cookie(),
-            httponly=True,
-            samesite="strict",
-            secure=request.url.scheme == "https",
             max_age=SESSION_MAX_AGE_S,
+            **ctx.auth.cookie_options(),
         )
         return response
 
@@ -234,8 +271,16 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
         form = await _form(request)
         if not ctx.auth.csrf_ok(request, form.get("csrf")):
             raise HTTPException(status_code=403, detail="missing or stale CSRF token")
-        response = RedirectResponse("/login" if ctx.auth.enabled else "/", status_code=303)
-        response.delete_cookie(SESSION_COOKIE)
+        ctx.auth.revoke_all()
+        response = redirect("/login" if ctx.auth.enabled else "/")
+        options = ctx.auth.cookie_options()
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path=options["path"],
+            secure=options["secure"],
+            httponly=True,
+            samesite="strict",
+        )
         return response
 
     # ------------------------------------------------------------ authenticated
@@ -243,7 +288,7 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def live(request: Request) -> Response:
         if not ctx.auth.is_authenticated(request):
-            return RedirectResponse("/login", status_code=303)
+            return redirect("/login")
         csrf = ctx.auth.csrf_for(request)
         fragment = live_fragment(
             load_view(ctx.state_dir), ctx.follow_status(), facade_host=ctx.facade_host
@@ -275,7 +320,7 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
     @app.get("/connect", response_class=HTMLResponse)
     def connect_form(request: Request) -> Response:
         if not ctx.auth.is_authenticated(request):
-            return RedirectResponse("/login", status_code=303)
+            return redirect("/login")
         csrf = ctx.auth.csrf_for(request)
         page = connect_page(
             csrf=csrf[0],
@@ -290,7 +335,7 @@ def create_app(ctx: ConsoleContext) -> FastAPI:
     @app.post("/connect", response_class=HTMLResponse)
     async def connect(request: Request) -> Response:
         if not ctx.auth.is_authenticated(request):
-            return RedirectResponse("/login", status_code=303)
+            return redirect("/login")
         form = await _form(request)
         csrf = ctx.auth.csrf_for(request)
         if not ctx.auth.csrf_ok(request, form.get("csrf")):

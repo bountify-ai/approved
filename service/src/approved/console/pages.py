@@ -64,6 +64,7 @@ def _shell(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{e(csrf)}">
+<meta name="base-path" content="">
 <title>{e(title)} · Approved</title>
 <link rel="stylesheet" href="/static/console.css">
 {script_tags}
@@ -107,6 +108,14 @@ def _chip(value: str | None, cls: str | None = None) -> str:
     return f'<span class="chip {e(cls or value)}">{e(value)}</span>'
 
 
+def _judge_cell(verdict: str | None, advisory: str) -> str:
+    """The judge's verdict, or why the approver decided without one."""
+    if advisory == "sent" or (advisory == "unknown" and verdict):
+        return _chip(verdict)
+    reason = advisory.split(":", 1)[-1] if ":" in advisory else advisory
+    return _chip(f"silent: {reason}", "warn")
+
+
 def _trace(url: str | None) -> str:
     if url and url.startswith(TRACE_PREFIX):
         return f'<a href="{e(url)}" target="_blank" rel="noopener noreferrer">trace</a>'
@@ -128,6 +137,17 @@ def live_fragment(view: LiveView, status: dict[str, Any], *, facade_host: str) -
     follow_label = "ok" if follow_ok else ("failing" if follow_ok is False else "not yet")
     error = status.get("last_error")
     c = view.counters
+    breaker = status.get("breaker", "closed")
+    backlog = int(status.get("follow_failures") or 0)
+    if breaker != "closed":
+        judge_state, judge_cls = f"judge silent: breaker {breaker}", "warn"
+    elif backlog:
+        judge_state, judge_cls = f"judge silent: backlog ({backlog} follow failures)", "warn"
+    elif chain == "chain-break":
+        judge_state, judge_cls = "judge silent: chain-break", "bad"
+    else:
+        judge_state, judge_cls = "judge speaking", "ok"
+    silence_items = ", ".join(f"{e(k)} {e(v)}" for k, v in c.get("silence", {}).items())
 
     cards = f"""
 <section class="grid cards" aria-label="Health and counters">
@@ -145,6 +165,10 @@ def live_fragment(view: LiveView, status: dict[str, Any], *, facade_host: str) -
   <div class="panel card"><p class="eyebrow">False READY</p>
     <div class="value">{e(c["false_ready"])} <span class="small muted">of {e(c["rejected"])} rejected</span></div>
     <div class="sub">escalation rate {e(_rate(c["escalation_rate"]))} · {e(c["verdicts"])} verdicts · {e(c["absent"])} absent</div></div>
+  <div class="panel card"><p class="eyebrow">Judge</p>
+    <div class="value">{_chip(judge_state, judge_cls)}</div>
+    <div class="sub">silence by reason: {silence_items or "none"}</div>
+    {f'<div class="sub">record-unverifiable: {e(c["record_unverifiable"])} (not judged, followed past)</div>' if c.get("record_unverifiable") else ""}</div>
 </section>"""
 
     if view.open_requests:
@@ -162,7 +186,7 @@ def live_fragment(view: LiveView, status: dict[str, Any], *, facade_host: str) -
     if view.recent:
         rows = "".join(
             f"""<tr><td class="num">{e(d.seq)}</td><td><code>{e(d.action_class or "?")}</code></td>
-<td>{_chip(d.human)}</td><td>{_chip(d.verdict)}</td><td>{_chip(d.label)}</td>
+<td>{_chip(d.human)}</td><td>{_judge_cell(d.verdict, d.advisory)}</td><td>{_chip(d.label)}</td>
 <td class="small muted">{e(d.actor)}</td><td>{_trace(d.trace_url)}</td>
 <td class="small muted">{e(d.feedback)}</td></tr>"""
             for d in view.recent

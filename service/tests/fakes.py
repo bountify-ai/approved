@@ -2,22 +2,20 @@
 
 The fake facade is the enforcement point for the judge's two hardest invariants:
 
-* **Read-only.** It answers ``GET /log/follow`` (and the read-only ``POST /verb/queue``).
-  Any other method or route is recorded as a violation and answered 418.
+* **Read-only.** It answers ``GET /log/follow`` only. Any other method or route is recorded as
+  a violation and answered 418.
 * **Tenant credential only.** A request carrying the agent credential, in either the
   ``Authorization`` or the ``X-Approval-Authorization`` header, is a violation.
 
 The ``facade`` fixture in ``conftest.py`` fails the test at teardown if any violation was
 recorded, so every worker test enforces both invariants whether or not it asserts them.
 
-Synthetic chains (``build_chain``) are in-memory records for a fake facade. Their hashes are
-sha256 over sorted-key JSON rather than JCS; the judge never recomputes hashes, it checks
-links, so only the linkage has to be real.
+Synthetic chains (``build_chain``) are in-memory records for a fake facade, hashed with the
+runtime's own scheme (SHA-256 over JCS), because the judge recomputes every hash.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import threading
 from collections.abc import Callable, Iterable
@@ -27,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from approved.follow import record_hash
 from approved.reviewer import (
     Decision,
     InferenceError,
@@ -41,7 +40,7 @@ FACADE_URL = "https://facade.test/a/tenant-1"
 TENANT_TOKEN = "tenant-credential-0123456789abcdef"
 AGENT_TOKEN = "agent-credential-fedcba9876543210"
 
-ALLOWED_ROUTES = {("GET", "/a/tenant-1/log/follow"), ("POST", "/a/tenant-1/verb/queue")}
+ALLOWED_ROUTES = {("GET", "/a/tenant-1/log/follow")}
 
 
 def load_fixture(name: str) -> dict[str, Any]:
@@ -49,8 +48,8 @@ def load_fixture(name: str) -> dict[str, Any]:
 
 
 def _digest(record: dict[str, Any]) -> str:
-    body = {k: v for k, v in record.items() if k != "hash"}
-    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    """The runtime's own scheme (sha256 over JCS without ``hash``), so fake chains verify."""
+    return record_hash(record)
 
 
 def build_chain(
