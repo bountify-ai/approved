@@ -289,7 +289,7 @@ Note: The judging criteria, in order: resilience, code quality, repo build, ease
 ---
 
 class: join
-qr: {{REPO_LINK}}
+qr: https://github.com/bountify-ai/approved
 qr-caption: Run it in ten seconds
 fragments: off
 
