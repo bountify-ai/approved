@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320" role="img" aria-labelledby="yep-title">
+  <title id="yep-title">Yep: a hooded figure leans in, grins and points</title>
+  <defs>
+    <clipPath id="yep-paper"><rect x="8" y="8" width="292" height="292" rx="38"/></clipPath>
+  </defs>
+  <!-- sticker: hard offset shadow, linen paper -->
+  <rect x="20" y="20" width="292" height="292" rx="38" fill="#17191d"/>
+  <rect x="8" y="8" width="292" height="292" rx="38" fill="#f6f3ec"/>
+  <g clip-path="url(#yep-paper)" stroke="#17191d" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+    <!-- the whole figure leans in, towards the list -->
+    <g transform="rotate(6 150 316)">
+      <!-- shoulders -->
+      <path d="M 70 324 C 74 258 106 232 150 232 C 196 232 224 258 230 324 Z" fill="#f5b82e"/>
+      <!-- hood, facing front -->
+      <path d="M 92 238 C 74 198 80 106 150 90 C 220 106 226 198 208 238 Z" fill="#f5b82e"/>
+      <path d="M 108 124 C 126 102 174 102 192 124" fill="none" opacity=".35"/>
+      <ellipse cx="152" cy="164" rx="46" ry="52" fill="#d9981a"/>
+      <ellipse cx="152" cy="166" rx="36" ry="42" fill="#fde8d0"/>
+      <!-- a small grin -->
+      <path d="M 136 180 Q 153 200 170 180 Z" fill="#17191d"/>
+      <!-- the pointing arm -->
+      <path d="M 180 320 L 222 208 L 254 222 L 222 324 Z" fill="#f5b82e"/>
+      <g fill="#fde8d0">
+        <rect x="244" y="186" width="42" height="15" rx="7.5"/>
+        <rect x="222" y="184" width="40" height="40" rx="13"/>
+        <path d="M 230 200 L 252 200" fill="none" opacity=".5"/>
+      </g>
+    </g>
+  </g>
+  <rect x="8" y="8" width="292" height="292" rx="38" fill="none" stroke="#17191d" stroke-width="5"/>
+</svg>

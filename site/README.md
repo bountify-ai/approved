@@ -37,6 +37,15 @@ own `../` links (stylesheets, scripts, the Markdown path).
   the speaker view).
 - Key lines sit at the top of a slide, one per line, plain text, with a blank line before the
   heading:
+  - `class: stamp|scene|meme|logos` are the show layouts: `stamp` slams the `# heading` onto
+    a dark slide as a rubber stamp, with any `## ` line and paragraphs fading in under it;
+    `scene` is a `chat` slide whose thread plays itself, one bubble every 900 ms (any key
+    still advances); `meme` is the two-panel reaction format, written as `## nope` and a
+    list, then `## yep` and a list, with our own reaction figures (`assets/nope.svg`,
+    `assets/yep.svg`, no real person's likeness); `logos` turns each bullet into a big chip.
+    In a thread, `held> text`, `blocked> text` and `stamp> WORD` land a rubber stamp, and
+    `verdict> text` is a red slab. A stat tile whose bold title starts with a number counts
+    up. All motion is off under `prefers-reduced-motion`.
   - `class: hero|grid|ledger` are the hackathon layouts: `hero` is a stamped title on the
     left and the slide's ```chat thread inside a phone on the right; `grid` puts the slide's
     `**Title** — body` paragraphs in a two-up grid of stat tiles (three-up at five or more);

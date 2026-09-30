@@ -13,10 +13,24 @@
  *   name> text       any other name: a person-side bubble labelled with the name as written
  *   system> text     a centred service pill
  *   buttons> A | B   an inline keyboard row under the previous bot bubble
+ *   held> text       a centred red-ink rubber stamp reading HELD, with text beside it in small
+ *                    caps mono: <li class="msg msg--stamp msg--buzz"><span class="stamp
+ *                    stamp--held">HELD</span><span class="stamp-text">text</span></li>. The
+ *                    stamp slams in when its fragment shows and the whole thread buzzes.
+ *   blocked> text    the same, reading BLOCKED (stamp--blocked, also msg--buzz)
+ *   stamp> WORD      a green stamp whose word is the text itself, e.g. "stamp> APPROVED"
+ *                    (<li class="msg msg--stamp"><span class="stamp stamp--ok">APPROVED</span>);
+ *                    no buzz
+ *   verdict> text    a centred red slab pill that slams in, e.g. "verdict> Nobody asked you."
+ *                    (<li class="msg msg--verdict"><span class="verdict">text</span></li>)
  *   badge> live|example|simulated|hermetic|illustrative|local|...
  *                    a sticker on the thread. "live" is quiet check green with a pulse,
  *                    "example" is quiet latte; anything else is loud (amber, striped), because
  *                    a simulated result must visibly say simulated.
+ *
+ * held, blocked, stamp and verdict are reserved words (they no longer name a person); like
+ * system> they are messages (fragments on slides) and end a speaker run. The slam and buzz
+ * motion lives in slides.css and slides.js; with reduced motion the stamps simply sit there.
  *
  * A line without a speaker continues the previous message. A bubble starting with "/" or "$" is
  * set as a command; one wrapped in "( … )" is a stage direction. Consecutive bubbles from the
@@ -49,6 +63,7 @@
   var BOTS = { gate: "Approval bot", judge: "Judge bot" };
   var PEOPLE = { human: "you" };
   var JUDGE_GLYPH = "⚖️"; // scales of justice
+  var STAMP_WORDS = { held: "HELD", blocked: "BLOCKED" }; // red ink; they buzz the thread
 
   function parse(text) {
     var out = { badges: [], items: [] };
@@ -79,6 +94,13 @@
           if (labels.length) out.items.push({ kind: "buttons", labels: labels });
         } else if (who === "system") {
           out.items.push({ kind: "system", text: body });
+        } else if (Object.prototype.hasOwnProperty.call(STAMP_WORDS, who)) {
+          out.items.push({ kind: "stamp", variant: who, word: STAMP_WORDS[who], text: body });
+        } else if (who === "stamp") {
+          // the word on the stamp is the text itself ("stamp> APPROVED")
+          out.items.push({ kind: "stamp", variant: "ok", word: null, text: body });
+        } else if (who === "verdict") {
+          out.items.push({ kind: "verdict", text: body });
         } else if (Object.prototype.hasOwnProperty.call(BOTS, who)) {
           out.items.push({ kind: "bot", bot: who, who: BOTS[who], text: body });
         } else {
@@ -193,6 +215,18 @@
 
       if (item.kind === "system") {
         li.appendChild(el("span", "pill", item.text));
+        lastBotCol = null;
+        lastMsg = null;
+      } else if (item.kind === "stamp") {
+        // HELD / BLOCKED carry the text beside the stamp; stamp> puts the text on the stamp
+        var word = item.variant === "ok" ? item.text : item.word;
+        if (item.variant !== "ok") li.className += " msg--buzz";
+        li.appendChild(el("span", "stamp stamp--" + item.variant, word));
+        if (item.variant !== "ok" && item.text) li.appendChild(el("span", "stamp-text", item.text));
+        lastBotCol = null;
+        lastMsg = null;
+      } else if (item.kind === "verdict") {
+        li.appendChild(el("span", "verdict", item.text));
         lastBotCol = null;
         lastMsg = null;
       } else {
