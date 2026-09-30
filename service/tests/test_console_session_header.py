@@ -231,6 +231,58 @@ def test_every_page_and_post_works_without_the_cookie_header(
     assert b"cookie" in proxy.dropped  # every one of those ran with the Cookie header dropped
 
 
+BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+
+def test_header_flow_answers_are_not_cached(client: TestClient) -> None:
+    page = client.get(f"{PREFIX}/login")
+    login = client.post(
+        f"{PREFIX}/login",
+        data={"token": CONSOLE_TOKEN, "csrf": _form_csrf(page.text)},
+        headers={LOGIN: "1"},
+    )
+    assert login.json()["flow"] == "header"
+    answers = [login]
+    h = {SESSION: login.json()["session"]}
+    answers += [
+        client.get(f"{PREFIX}{p}", headers=h)
+        for p in ("/", "/policy", "/connect", "/partials/live", "/metrics")
+    ]
+    csrf = _meta(answers[1].text, "csrf-token")
+    answers.append(
+        client.post(
+            f"{PREFIX}/connect",
+            data={"tenant": "acme", "facade_url": "https://api.maritime.sh/a/x", "csrf": csrf},
+            headers=h,
+        )
+    )
+    answers.append(client.get(f"{PREFIX}/metrics", headers={SESSION: "0.forged"}))
+    answers.append(client.post(f"{PREFIX}/logout", data={"csrf": csrf}, headers=h))
+    for answer in answers:
+        assert answer.status_code in (200, 401), answer.request.url
+        assert answer.headers["cache-control"] == "no-store", answer.request.url
+
+
+def test_a_browser_navigation_to_metrics_goes_to_sign_in(client: TestClient) -> None:
+    """A reload of /metrics in a header-mode tab carries no header: it must reach the sign-in
+    document (whose script restores the page), not strand the tab on raw 401 JSON."""
+    nav = client.get(
+        f"{PREFIX}/metrics", headers={"accept": BROWSER_ACCEPT}, follow_redirects=False
+    )
+    assert nav.status_code == 303
+    assert nav.headers["location"] == f"{PREFIX}/login"
+    for accept in ("*/*", "application/json", ""):
+        api = client.get(f"{PREFIX}/metrics", headers={"accept": accept}, follow_redirects=False)
+        assert api.status_code == 401, accept
+        assert api.json() == {"detail": "sign in at /login"}
+    session = _sign_in(client)
+    signed = client.get(f"{PREFIX}/metrics", headers={SESSION: session, "accept": BROWSER_ACCEPT})
+    assert signed.status_code == 200
+    assert signed.json()["open_requests"] == 2
+    dead = client.get(f"{PREFIX}/metrics", headers={SESSION: "0.x", "accept": BROWSER_ACCEPT})
+    assert dead.status_code == 401  # a script's request with a dead header: 401, not a redirect
+
+
 # ------------------------------------------------------------------ nothing without a session
 
 

@@ -14,7 +14,7 @@ path                  auth    what
 ``/``                 token   the live tenant view
 ``/partials/live``    token   the live view's fragment, polled by the page
 ``/connect``          token   the connect bundle
-``/metrics``          token   JSON counters
+``/metrics``          token   JSON counters (a signed-out HTML navigation: 303 /login)
 ====================  ======  ==================================================
 
 It reads the judge's state file and the worker's in-process follow status only: no page
@@ -171,6 +171,12 @@ def _demo_note(ctx: ConsoleContext) -> str | None:
     if ctx.auth.enabled:
         return "Demo mode: local stack, fake Telegram, throwaway credentials."
     return "Demo mode with no console token: every page is open. Never run this way in production."
+
+
+def _navigation(request: Request) -> bool:
+    """A browser navigation asks for HTML; fetch() and API clients do not. (A request with a
+    session header never gets here unauthenticated: the gate answered it 401.)"""
+    return "text/html" in request.headers.get("accept", "")
 
 
 async def _form(request: Request) -> dict[str, str]:
@@ -367,7 +373,12 @@ def create_app(
         )
 
     @app.get("/metrics")
-    def metrics(request: Request) -> dict[str, Any]:
+    def metrics(request: Request) -> Any:
+        if not ctx.auth.is_authenticated(request) and _navigation(request):
+            # A browser navigation (a reload of /metrics in a header-mode tab carries no
+            # header) gets the sign-in page like every other page; the URL fragment survives
+            # the redirect. API callers keep the 401 JSON.
+            return redirect("/login")
         require_auth(request)
         view = load_view(ctx.state_dir)
         return {
