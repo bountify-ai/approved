@@ -7,11 +7,11 @@ const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../../service/src/approved/tryit/page.py'),'utf8');
 const match=source.match(/PAGE_SCRIPT = r"""([\s\S]*?)"""/);
 assert.ok(match,'page script found');
-const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,status,renderRun,renderChat,renderTelemetry,clearSession,begin,poll,run};})();');
+const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,status,renderRun,renderChat,renderTelemetry,clearSession,openPolicy,setTokenForTest(value){token=value;},begin,poll,run};})();');
 const nodes=new Map();
 const document={
   querySelector(){return null;},
-  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],addEventListener(){},replaceChildren(...items){this.children=items;},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},querySelector(sel){return this.children.find(n=>sel==='details.history'?n.className==='history':n.className==='current-payload');},setAttribute(){},textContent:'',hidden:false});return nodes.get(id);},
+  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],style:{},open:false,addEventListener(){},replaceChildren(...items){this.children=items;},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},querySelector(sel){return this.children.find(n=>sel==='details.history'?n.className==='history':n.className==='current-payload');},setAttribute(){},getBoundingClientRect(){return {top:340};},showModal(){this.open=true;},close(){this.open=false;},scrollIntoView(){},focus(){},textContent:'',hidden:false});return nodes.get(id);},
   createElement(tag){return {tagName:tag,children:[],textContent:'',className:'',addEventListener(){},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);}};},
 };
 const context={document,location:{href:'https://gateway.example/'},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},URL,setInterval(){}};
@@ -77,6 +77,39 @@ test('session telemetry uses measured status and clears after expiry',()=>{
   context.__pageTest.clearSession();
   assert.match(nodes.get('ops-session').textContent,/Start a session/);
   assert.equal(nodes.get('ops-processes').children.length,1);
+});
+test('Maritime health link appears only for configured provider',()=>{
+  const base={version:1,session:{ref:'abc123',elapsed_s:1},runtime:{processes:{}},events:[]};
+  context.__pageTest.renderTelemetry({telemetry:base});
+  assert.equal(nodes.get('ops-host').textContent,'Hosted demo runtime');
+  context.__pageTest.renderTelemetry({telemetry:{...base,runtime:{...base.runtime,provider:'Maritime deployment'}}});
+  const link=nodes.get('ops-host').children[0];
+  assert.equal(link.href,'https://api.maritime.sh/a/65c73318-c0cb-44ee-82ed-717d63b87019/health');
+  assert.equal(link.target,'_blank');
+  assert.equal(link.rel,'noopener noreferrer');
+  context.__pageTest.clearSession();
+  assert.equal(nodes.get('ops-host').textContent,'Hosted demo runtime');
+});
+test('policy modal renders plain current bytes and ignores a stale session response',async()=>{
+  const page=context.__pageTest;
+  page.setTokenForTest('a'.repeat(32));
+  context.Response=Response;
+  context.fetch=async()=>new Response(JSON.stringify({path:'/data/tryit/sessions/one/demo/APPROVAL.md',sha256:'a'.repeat(64),text:'<b>read.*</b>'}),{headers:{'content-type':'application/json'}});
+  await page.openPolicy();
+  assert.equal(nodes.get('policy-dialog').open,true);
+  assert.equal(nodes.get('policy-dialog').style.top,'220px');
+  assert.equal(nodes.get('policy-path').textContent,'/data/tryit/sessions/one/demo/APPROVAL.md');
+  assert.equal(nodes.get('policy-text').textContent,'<b>read.*</b>');
+  assert.equal(nodes.get('policy-sha').textContent,'SHA-256 '+'a'.repeat(64));
+  let answer;
+  context.fetch=()=>new Promise(resolve=>{answer=resolve;});
+  const pending=page.openPolicy();
+  page.clearSession();
+  answer(new Response(JSON.stringify({path:'/data/old',sha256:'b'.repeat(64),text:'old private bytes'}),{headers:{'content-type':'application/json'}}));
+  await pending;
+  assert.equal(nodes.get('policy-dialog').open,false);
+  assert.equal(nodes.get('policy-path').textContent,'');
+  assert.equal(nodes.get('policy-text').textContent,'');
 });
 
 test('judge absence reason is visible as text while the run waits for a human',()=>{

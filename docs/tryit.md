@@ -31,6 +31,9 @@ The core's fixed policy and agent scenarios cannot be changed by visitor input.
 The core's Telegram bot ownership registry is also rooted in each session's data directory;
 a later visitor can safely reuse a slot's fake Bot API port without inheriting the previous
 visitor's bot claim.
+GET /api/policy reads only the current session's fixed APPROVAL.md file after readiness,
+returning bounded UTF-8 text, its actual VPS path, and the SHA-256 of the current bytes.
+This view is not a statement about historic attestation; no caller-supplied path is accepted.
 
 `POST /api/run` starts one scripted run in that session. `GET /approver/api/chat` shows its
 private demo messages; `POST /approver/api/tap` delivers an Approve or Reject button only for a

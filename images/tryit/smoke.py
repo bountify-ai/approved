@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -153,6 +154,23 @@ def main() -> int:
         check(bool(ready1 and ready2), "both real runtimes provisioned")
         if not ready1 or not ready2:
             return 1
+        policy_status, policy_one, _ = request("GET", "/api/policy", token1)
+        other_status, policy_two, _ = request("GET", "/api/policy", token2)
+        check(policy_status == other_status == 200, "both visitors can read their current policy")
+        check(
+            policy_status == 200
+            and policy_one.get("path", "").startswith("/data/tryit/sessions/")
+            and policy_one.get("path", "").endswith("/demo/APPROVAL.md")
+            and "vcs.push.main" in policy_one.get("text", "")
+            and policy_one.get("sha256")
+            == hashlib.sha256(policy_one.get("text", "").encode()).hexdigest(),
+            "policy view shows the real session path, bytes, and matching digest",
+        )
+        check(
+            other_status == 200 and policy_one.get("path") != policy_two.get("path"),
+            "policy paths stay disjoint across sessions",
+        )
+        check(request("GET", "/api/policy")[0] == 401, "policy view needs a visitor capability")
         check(
             state(token1).get("run") is None and state(token2).get("run") is None,
             "both sessions begin with empty runs",

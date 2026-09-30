@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -27,6 +29,70 @@ def _call(
         headers.update({"content-type": "application/json", "content-length": "2"})
     response = app.handle(method, path, headers, lambda n: b"{}"[:n])
     return response.status, json.loads(response.body)
+
+
+def test_policy_view_is_current_bounded_file_for_only_own_session(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(
+        "approved.tryit.sessions.load_scenarios",
+        lambda _path: [("push", "git push origin main", "manual")],
+    )
+
+    def provision(_self: PrivateSessions, visitor: Any) -> None:
+        visitor.app = object()
+        visitor.state = "ready"
+        visitor.provision_done.set()
+
+    monkeypatch.setattr(PrivateSessions, "_provision", provision)
+    app = PrivateSessions(Settings(port=18789), tmp_path, "gateway-secret-0123456789-0123456789")
+    _, first = _call(app, "POST", "/api/session")
+    _, second = _call(app, "POST", "/api/session")
+    one, two = first["session_token"], second["session_token"]
+    paths = [
+        tmp_path / "tryit" / "sessions" / app._visitors[token].id / "demo" / "APPROVAL.md"
+        for token in (one, two)
+    ]
+    for index, path in enumerate(paths):
+        path.parent.mkdir(parents=True)
+        path.write_text(f"policy {index}", encoding="utf-8")
+    assert _call(app, "GET", "/api/policy")[0] == 401
+    assert _call(app, "GET", "/api/policy", token=one, gate="wrong")[0] == 403
+    assert _call(app, "POST", "/api/policy", token=one)[0] == 405
+    assert _call(app, "GET", "/api/policy?path=../other", token=one)[0] == 400
+    code, own = _call(app, "GET", "/api/policy", token=one)
+    assert code == 200
+    assert own == {
+        "path": str(paths[0]),
+        "sha256": hashlib.sha256(b"policy 0").hexdigest(),
+        "text": "policy 0",
+    }
+    assert _call(app, "GET", "/api/policy", token=two)[1]["text"] == "policy 1"
+    headers = {
+        "x-approved-gateway": "gateway-secret-0123456789-0123456789",
+        "x-approved-session": one,
+    }
+    head = app.handle("HEAD", "/api/policy", headers, lambda _n: b"")
+    assert head.status == 200
+    assert head.body == b""
+    paths[0].write_bytes(b"x" * (16 * 1024 + 1))
+    assert _call(app, "GET", "/api/policy", token=one)[0] == 503
+    paths[0].write_bytes(b"\xff")
+    assert _call(app, "GET", "/api/policy", token=one)[0] == 503
+    paths[0].unlink()
+    paths[0].symlink_to(paths[1])
+    assert _call(app, "GET", "/api/policy", token=one)[0] == 503
+    paths[0].unlink()
+    os.mkfifo(paths[0])
+    assert _call(app, "GET", "/api/policy", token=one)[0] == 503
+    paths[0].unlink()
+    paths[0].write_text("policy 0", encoding="utf-8")
+    paths[0].parent.rename(paths[0].parent.with_name("elsewhere"))
+    paths[0].parent.symlink_to(paths[0].parent.with_name("elsewhere"), target_is_directory=True)
+    assert _call(app, "GET", "/api/policy", token=one)[0] == 503
+    app._visitors[two].expires_at = time.time() - 1
+    assert _call(app, "GET", "/api/policy", token=two)[0] == 410
+    app.shutdown()
 
 
 def test_private_session_gateway_capability_capacity_and_expiry(
