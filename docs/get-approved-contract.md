@@ -48,6 +48,20 @@ scripted agent and a live advisory model. It is not production tenant onboarding
   Exhaustion prevents further paid admission and is displayed explicitly.
 - Existing dogfood, Hermes, and judge deployments are outside the mutation scope.
 
+## Visitor telemetry
+
+Authenticated session state may include a versioned, bounded view of that visitor's
+runtime. It identifies a session by a short fingerprint derived from its random ID,
+never by its capability. Lifecycle times and elapsed session age use measured clocks.
+The live demo uses isolated processes and stores on one Maritime deployment, not a new
+machine per visitor. The provider label appears only when the deployment sets
+`TRYIT_MARITIME_DEPLOYMENT=1`; local image runs omit it. Process running and health fields come from the supervisor and
+loopback health probes; a missing judge is reported as absent and does not stop a human
+decision. An allowlisted lifecycle event list contains only timestamps and fixed event
+names, capped to the latest 20 entries. No raw process logs, credentials, internal paths,
+provider usage estimates, or another visitor's state reach this view. CPU, memory, cost,
+and model call progress must not be inferred from a started process or a pending scenario.
+
 ## Release evidence
 
 Before public exposure, run service lint/typecheck/tests, gateway security tests,
