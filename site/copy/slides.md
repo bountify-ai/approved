@@ -300,7 +300,7 @@ fragments: off
 - **3.** Open the W&B project: traces, your taps as feedback, the evaluation.
 - **4.** `make lint typecheck test`. Green is the claim.
 
-W&B project: wandb.ai/bountify/judgy
+Everything in one place: https://approval.md/approved/
 
 Note: Replace the QR placeholder with the repo link before submitting. Live variant: `approved ask` against the gated agent on Maritime with a real phone, if the judge is deployed; the beats are the same as scene one. Video: 2:46-2:56.
 
@@ -312,6 +312,6 @@ class: stamp
 
 ## The judge recommends. You decide.
 
-approval.md · wandb.ai/bountify/judgy
+https://approval.md/approved/
 
 Note: Let the stamp land. Stop talking. Video: 2:56-3:00.
