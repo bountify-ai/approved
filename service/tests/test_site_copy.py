@@ -261,6 +261,36 @@ human> (taps Reject)
 
 ---
 
+class: scene
+
+# A scene that plays itself
+
+```chat
+badge> example
+agent> Sending your home address...
+held> communicate.message.external · manual
+judge> NEEDS_HUMAN. Shares a home address. (advisory)
+human> (taps Reject)
+stamp> YOU DECIDED
+verdict> Nobody asked you.
+```
+
+---
+
+class: meme
+
+# How everyone tries to stop this
+
+## nope
+
+- a paragraph in a prompt file
+
+## yep
+
+- one `APPROVAL.md`
+
+---
+
 class: split
 badge: illustrative
 

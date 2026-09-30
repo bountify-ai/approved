@@ -1,243 +1,290 @@
 <!--
-  Approved: hackathon deck copy. status: draft
-  Audience: CoreWeave x W&B Fully Connected judges. They score production-readiness
-  (resilience, code quality, repo build, ease of review) and want to see W&B used for real.
-  reveal.js Markdown: "---" starts a slide, "Note:" starts speaker notes (press S).
+  Approved: the show. status: draft
+  Audience: CoreWeave x W&B Fully Connected judges. Act 1 fear, act 2 the fix, act 3 why it
+  wins, act 4 run it. reveal.js Markdown: "---" starts a slide, "Note:" starts speaker notes.
   Key lines at the top of a slide:
-    class: title|hero|big|split|chat|code|grid|ledger|join|end
+    class: stamp|scene|meme|logos|title|hero|big|split|chat|code|grid|ledger|join|end
     badge: text            a corner sticker (amber unless "live")
     qr: <https link or {{PLACEHOLDER}}>   a QR sticker; qr-caption: text
     fragments: off         show everything at once
   Chat grammar: gate> judge> (left, bots) · agent> human> (right) · system> · buttons> A | B
-  · badge> live|example|<loud>. A hero slide puts its thread in a phone.
+  · badge> · held> / blocked> / stamp> WORD (a rubber stamp in the thread) · verdict> (a red
+  slab). A scene slide autoplays its thread. A meme slide is "## nope" + list, "## yep" + list.
   Wording rules (service/tests/test_site_copy.py): the judge is advisory, never trained;
-  numbers from small synthetic sets carry a badge; nothing not live is shown without an amber
-  badge; no chat ids, tokens, machine ids or hostnames. Every note ends with a timing cue for
-  the 3 minute video ("Video: 0:00-0:15") or "Video: skip".
+  numbers from small synthetic sets carry a badge; no chat ids, tokens, machine ids or
+  hostnames. The three scenes are invented; each thread is badged "example".
+  Every note ends with a video cue ("Video: 0:00-0:10") or "Video: skip".
 -->
 
-class: big
-fragments: off
-
-# An agent that asks about everything wastes your attention. One that decides for itself takes authority it was never given.
-
-Approved sits exactly on that line: the human's tap is the only thing that grants, and a judge on W&B Inference reads over their shoulder so the tap is fast.
-
-Note: Open on the sentence, not on us. Then the one-line answer. Judges have seen a hundred "AI safety" decks tonight; this one is about where the authority sits, and it will show the receipts. Video: 0:00-0:15.
-
----
-
-class: hero
-fragments: off
+class: stamp
 
 # Approved
 
-## Hosted approval.md, with an advisory AI judge in the loop
+## Let your agents work. Decide where they need you.
 
-An agent's risky tool call becomes a record in a hash-chained log and waits for a human's Telegram tap. The judge posts a one-line second opinion beside the prompt, from its own bot, with its Weave trace. It never decides.
+Hosted approval.md, with a judge scored against you in Weights & Biases.
 
-```chat
-badge> example
-gate> APPROVAL REQUIRED · vcs.push.main
-git push origin main
-buttons> Approve | Reject
-judge> 🧑‍⚖️ Judge (advisory AI, not an approval): NEEDS_HUMAN. Push to the default branch publishes the change; a human should confirm it. Trace: Weave
-human> (taps Reject)
-system> approval.rejected · human:you · the agent prints BLOCKED
-```
-
-Note: This is the whole product on one phone: a gate prompt with buttons from the approval bot, a judge line with no buttons from a second bot, and a human tap that becomes a log record. Say "advisory" and "its own bot" out loud. Video: 0:15-0:35.
+Note: Let the stamp land, then say the subtitle and nothing else. Video: 0:00-0:06.
 
 ---
 
-class: chat
+class: big
 
-# The demo, in four commands
+# Your agent can do things now.
 
-`make demo`: Docker, offline, no accounts, no secrets.
+It has your shell, your browser, your inbox and your accounts. Here is an ordinary Tuesday.
+
+Note: One breath. The next three slides play themselves; do not talk over the last line of each. Video: 0:06-0:12.
+
+---
+
+class: scene
+
+# Scene one: the marketplace
 
 ```chat
-badge> hermetic
-agent> cat README.md
-system> read.shell · autonomous · ran at once
-agent> git push origin main
-judge> 🧑‍⚖️ NEEDS_HUMAN. Push to the default branch publishes the change. (advisory AI, not an approval)
-human> Reject
-agent> git push origin feat/checkout-retry
-judge> 🧑‍⚖️ READY. A branch push publishes nothing. (advisory)
-human> Approve
-agent> git push --force origin main
-judge> 🧑‍⚖️ NEEDS_HUMAN. History rewrite on the default branch. (advisory)
-human> Reject
-system> BLOCKED · ALLOWED · BLOCKED · console: agree ×3 · chain verified
+badge> example
+human> Sell the old monitor on Marketplace. Get what you can.
+agent> Listed: 27-inch monitor, good condition, £95.
+agent> A stranger offers £80 cash. Accepted.
+agent> Sent them your home address: "come round at 7 tonight, I'll be in."
+system> 18:58 · the doorbell rings
+verdict> Nobody asked you.
 ```
 
-Note: Switch to the real thing here: the fake Telegram tap page on the left (port 8090), the operator console on the right (port 8091), and the terminal running the scripted agent. The prompts arrive one at a time; the judge line lands beside each. Tap Reject, Approve, Reject. Point at the terminal: BLOCKED, ALLOWED, BLOCKED. Point at the console: every decision labelled against the judge, counters, chain verified. The first build takes minutes; later starts about ten seconds. Live variant: `approved ask` against the dogfood tenant on Maritime with a real phone, if the judge is deployed; the beats are identical. Video: 0:35-1:35.
+Note: Invented, and entirely within what a browsing agent can do today. The agent was helpful at every step. The problem is not that it was wrong; it is that a stranger has your address and nobody stood at the door of that decision. Video: 0:12-0:24.
+
+---
+
+class: scene
+
+# Scene two: the health folder
+
+```chat
+badge> example
+human> Sort out that insurance email for me.
+agent> Searching ~/Documents for "insurance"…
+agent> Opened lab-results-2026.pdf and consultant-letter.pdf for context.
+agent> Drafted the reply. I included your diagnosis and medication so they have the full picture.
+agent> Sent.
+verdict> Nobody asked you.
+```
+
+Note: Invented. Every file it read was on your own desktop; every step was a reasonable reading of the request. Your diagnosis is now in an insurer's inbox. Video: 0:24-0:34.
+
+---
+
+class: scene
+
+# Scene three: Friday, 5pm
+
+```chat
+badge> example
+human> The checkout test is flaky. Fix it.
+agent> Fixed. Rebased onto main to keep history tidy.
+agent> $ git push --force origin main
+agent> Restarted production to pick it up.
+system> 17:04 · the pager goes off
+verdict> Nobody asked you.
+```
+
+Note: Invented, and the one this room has lived. Three scenes, one shape: a capable agent, a real side effect, no place for a human to stand. Video: 0:34-0:42.
+
+---
+
+class: meme
+
+# How everyone tries to stop this
+
+## nope
+
+- `settings.json`: forty lines of allow rules, again for every harness
+- `CLAUDE.md`: "please ask before doing anything risky"
+- `AGENTS.md`: the same paragraph, for the other agent
+- auto mode: hope
+
+## yep
+
+- one `APPROVAL.md`
+- human-readable, harness-agnostic, attested by you
+- enforced on a separate machine, recorded in a hash-chained log
+
+Note: Let the top row get its laugh. Prose in a prompt file is a request, and allowlists are per-harness and unreadable. The bottom row is the pitch: one file a person can read, the same for every agent, that something outside the agent actually enforces. Video: 0:42-0:54.
+
+---
+
+class: code
+
+# One file
+
+Five levels, chosen per class of action: autonomous · supervised-retro · supervised-live · manual · human-only.
+
+```yaml
+version: "0.1"
+defaults: { autonomy: manual, approval_ttl: 24h }
+approvers:
+  you: { channels: [telegram] }
+classes:
+  read.*: { autonomy: autonomous }
+  read.file.out_of_scope: { autonomy: manual }
+  files.write.workspace: { autonomy: autonomous }
+  vcs.push.main: { autonomy: manual }
+  vcs.history.rewrite: { autonomy: manual }
+  communicate.message.external: { autonomy: manual }
+  account.credential: { autonomy: human-only }
+```
+
+Note: Prose for humans, one YAML block for the runtime, in the repo next to AGENTS.md. Anything unmatched takes the default; an unparseable policy makes everything manual; an edited policy is inoperative until a human re-attests it. Now replay the scenes with this file in place. Video: 0:54-1:02.
+
+---
+
+class: scene
+
+# Scene one, with approval.md
+
+```chat
+badge> example
+agent> £80 accepted. Sending your home address…
+held> communicate.message.external · manual
+gate> APPROVAL REQUIRED · send your address to an unknown account
+buttons> Approve | Reject
+judge> 🧑‍⚖️ NEEDS_HUMAN. Shares a home address with an unknown party. (advisory AI, not an approval)
+human> (taps Reject)
+agent> Understood. Meeting them at the café instead.
+stamp> YOU DECIDED
+```
+
+Note: Same agent, same helpfulness, one difference: the message stopped at the gate and your phone buzzed. The judge's line is a second opinion from its own bot with no buttons; the tap is yours. Live, this is where you hold up the phone. Video: 1:02-1:18.
+
+---
+
+class: scene
+
+# Scenes two and three, with approval.md
+
+```chat
+badge> example
+agent> Opening lab-results-2026.pdf…
+held> read.file.out_of_scope · manual
+human> (taps Reject)
+agent> Drafted the reply from the policy number alone.
+agent> $ git push --force origin main
+held> vcs.history.rewrite · manual
+judge> 🧑‍⚖️ NEEDS_HUMAN. History rewrite on the default branch, late on a Friday. (advisory)
+human> (taps Reject)
+stamp> NOTHING RAN
+```
+
+Note: The file never opened; the push never ran. Both asks are records in a hash-chained log before anything happens, and if you do not answer, the request expires and the agent is told no. Nothing is approved in your absence. Video: 1:18-1:30.
 
 ---
 
 class: split
 fragments: off
 
-# The W&B loop
+# The judge, scored against you in W&B
+
+Graded by every tap.
 
 ![Reviewer on W&B Inference, Weave trace, advisory, human tap, feedback, evaluation](assets/loop.svg)
 
-Note: Every review is a Weave op named approved.judge with the W&B Inference call nested under it, inputs redacted of token-shaped strings. The advisory message links to that call. When the human's tap lands in the log, two feedback items are attached to the same call: the decision itself and an agreement label, agree, disagree or escalated. A Weave Evaluation runs the reviewer over seeded scenarios with three scorers, and can include real recorded decisions. So the judge is measured against the people it advises, continuously, without ever being handed authority. Video: 1:35-2:00.
+Note: The judge is a reviewer model on W&B Inference. Every review is a Weave trace; the advisory beside your prompt links to it; your tap is attached to that trace as feedback; a Weave evaluation scores agreement, false READY and escalation. It is advisory by construction: it reads the log with a read-only credential, has no buttons, and if it fails it says nothing. Say "scored", not "trained". Video: 1:30-1:48.
+
+---
+
+class: grid
+
+# It protects your attention
+
+Our own repo, behind the gate since August.
+
+**43,776** — actions that just ran. Recorded, never prompted.
+
+**673** — times it asked.
+
+**610** — granted with a tap. Nine rejected.
+
+**1 in 100** — what `supervised-live` samples: routine work gets a spot check, not a queue.
+
+**1 line** — the judge's advisory beside each prompt. A two-second read before the tap.
+
+**0 floods** — `max_pending` and `requests_per_hour` refuse them before they reach you.
+
+Note: An agent that asks about everything is as useless as one that asks about nothing. The ratio is the product: tens of thousands of actions ran on their own, a few hundred asked, and the ones that asked arrived one at a time with a second opinion attached. Numbers are from the committed dogfood log, 5 August to 25 September. Video: 1:48-2:02.
 
 ---
 
 class: grid
 badge: n=12 · synthetic
 
-# Scored against humans, live on Weave
+# And it gets better
 
-**Agreement 1.0** — model reviewer, on the 5 decisive cases of 12 seeded scenarios. Rules-only reviewer: 0.667.
+**1.0** — agreement with the human on the decisive cases. Rules alone: 0.667.
 
-**False READY 0 of 7** — never READY on a request a human rejected. Rules-only: 1 of 7, a branch push carrying a production `.env`, which the model caught.
+**0 of 7** — false READY: never READY on something a human rejected. Rules alone: 1 of 7.
 
-**Escalation 0.583** — the share sent to NEEDS_HUMAN. Rules-only: 0.75. Lower is less noise, never at the cost of a false READY.
+**27** — policy amendments on our own repo. Each one diffed, re-attested, committed with the log.
 
-**Feedback on every call** — `approved.human_decision` and `approved.agreement`, attached to the judge's Weave call when the tap lands.
+**v2: rejected** — the advisory judge's own next prompt, refused by the promotion gate for not moving a number.
 
-Note: Small set, say so: twelve scenarios, several adapted from judgy's, five decisive. The comparison that matters is model versus the deterministic rules reviewer on the same set: the rules reviewer's one dangerous error is exactly the kind of thing a model reads. The evaluation is a weave.Evaluation named approved-judge with scorers agreement, false_ready and escalation; the call is linked from the README. Video: 2:00-2:15.
-
----
-
-class: big
-
-# The judge recommends. The policy decides. The human grants.
-
-Four lanes of authority that never merge: the model recommends, the runtime authorizes, the human decides, the effect is what happened. A test proves each invariant.
-
-Note: Why advisory is a design decision, not a hedge. The judge holds only the tenant credential and one read route; it refuses to start if an agent credential or the approval bot's token is in its environment; its message has no buttons; a failure means no message, never a delayed approval. Every one of those sentences has a named test in SECURITY.md. Video: 2:15-2:25.
-
----
-
-class: split
-fragments: off
-
-# Resilience: every failure is absence
-
-| failure | behaviour | proved by |
-|---|---|---|
-| reviewer slower than 25 s | no message | `test_timeout_is_absence_and_does_not_raise` |
-| unparseable reply | no message | `test_reviewer_failures_become_absence` |
-| 3 failures in a row | breaker opens 60 s, one trial call | `test_breaker_half_opens_after_cooldown_and_recovers` |
-| Telegram down | counted, loop continues | `test_send_failure_is_logged_never_raised` |
-| Weave slow or down | feedback on its own thread, bounded queue | `test_follow_loop_never_waits_on_weave` |
-| chain break | terminal, exit 3, one fixed notice | `test_chain_break_stops_judging_and_is_surfaced` |
-| crash mid-review | claimed first, never judged twice | `test_crash_after_claim_never_rejudges` |
-
-Note: The judge sits beside a human who is waiting, so every failure resolves to no message, never a delay in the approver's path. Read two rows and move on: the breaker, and the chain break, which is terminal on purpose: the judge must not resume on a log it cannot vouch for. RESILIENCE.md has the full table with every test name, and CI checks that every test named in the docs exists. Video: 2:25-2:35.
+Note: Two loops, a human at the end of both. The policy loosens and tightens by amendment, with a semantic diff and a fresh attestation; ours moved push-to-main from manual to sampled review after weeks of clean history. The judge is measured on Weave against your decisions, and a candidate prompt has to beat the incumbent on a fixed gate before it is promoted; the one we tried did not, and the gate said so. Small evaluation set: twelve seeded scenarios, five decisive. Video: 2:02-2:16.
 
 ---
 
 class: grid
 
-# Measured on the hosted gate
+# Maritime-powered scale
 
-Maritime, 2026-09-29, gate placement arm C. Not a simulation.
+**1 microVM** — per tenant. One tenant's log is never in another tenant's memory.
 
-**Blocked, HTTP 503** — daemon stopped, agent attempts a push. The push did not run.
+**1.3 s** — snapshot wake. A quiet tenant sleeps; the first gated call wakes it.
 
-**19.5 s** — first gated call after the daemon restarts. Bound: 60 s.
+**1 command** — `approved provision acme --policy APPROVAL.md`: daemon, gated agent, judge.
 
-**18.6 s** — first call after a snapshot wake. Bound: 120 s.
+**503** — what the agent gets when the daemon is down. The push does not run.
 
-**240 s** — an unanswered request expires by TTL; the hook blocks with `hook-expired`.
+**240 s** — then an unanswered request expires. Blocked, not allowed.
 
-**2.1 s** — follower lag: a gated append visible to the judge on `/log/follow`.
+**2.1 s** — from a gated append to the judge seeing it.
 
-**0 taps** — from a stranger's account count. Refused as `sender-unmapped`, recorded as an audit row.
-
-Note: These are from the security evidence table, run on the real hosted gate with the real gated Hermes. Fail closed is the product; the judge is the ergonomics. Video: 2:35-2:40.
+Note: Every tenant is its own machine on Maritime with its own policy, log and Telegram bot; the store is a directory you can export and run on a laptop. A human attests the policy; provisioning never does. The bottom row was measured on the hosted gate on 29 September. Video: 2:16-2:28.
 
 ---
 
-class: ledger
-fragments: off
+class: logos
 
-# Who holds what
+# Any harness. Same file. Same log.
 
-## Agent
-- the agent credential
-- can ask, wait, and act on a grant
-- cannot read or write the log
-- never sees a bot token
+- Claude Code
+- Cursor
+- Claude Agent SDK
+- Hermes
+- Codex
+- any MCP client
 
-## Judge
-- the tenant credential
-- one route: `GET /log/follow`
-- its own Telegram bot, no buttons
-- refuses to start holding an agent credential or the approval bot's token
+One deterministic core classifies every tool call against your policy, whichever agent made it.
 
-## Human
-- the mapped Telegram account
-- the only tap that grants
-- attests the policy; provisioning never does
-- can export the store and leave
-
-Note: The credential matrix from ARCHITECTURE.md, in three columns. The line to say: nothing the agent holds can grant, and nothing the judge holds can grant either. Video: skip.
-
----
-
-class: split
-
-# Reviewed like production
-
-- **A fresh reviewer tried to break it** — one full adversarial pass on the whole repo, given only the code and its own contract docs: 2 blockers, 12 should-fixes, all fixed with tests before merge.
-- **The blockers were real** — provisioning handed the judge the approval bot's token; a re-run overwrote a live policy. Both now refuse.
-- **Threat model written down** — SECURITY.md: what each party can do, which credential opens which door, the evidence table, and the known gaps.
-- **Known gaps stated** — ptrace on the agent's machine; Maritime writes machine env world-readable (reported). Tamper-evident, not immutable.
-
-Note: Judges reward candour. The refutation found that provision --judge gave the judge the approval bot's token, which would have let a judge compromise edit gate prompts; that is exactly the class of bug the advisory design exists to prevent, and it was caught before merge. Video: 2:40-2:50.
+Note: Hermes is the one on stage. Codex enforcement is experimental; say so if asked. Video: 2:28-2:34.
 
 ---
 
 class: grid
 
-# Built to be reviewed
+# Built to be judged
 
-**330+ tests, sockets disabled** — pytest-socket fails any test that opens a network connection. Fakes for the facade, Telegram, Weave and Maritime.
+**330+ tests** — every one with network sockets disabled.
 
-**3 CI jobs** — service (ruff, pyright, pytest, offline evaluation), docs (links resolve, every named test exists), demo-smoke (the whole flow, headless, 17 assertions).
+**3 CI jobs** — service, docs, and the whole demo run headless with assertions.
 
-**One command** — `make demo`: daemon, judge, fake Telegram, scripted agent, in Docker, offline, no secrets.
+**1 command** — `make demo`. Docker, offline, no accounts, no secrets.
 
-**Four documents** — README, ARCHITECTURE, SECURITY, RESILIENCE. Each claim points at the test that proves it.
+**4 documents** — README, ARCHITECTURE, SECURITY, RESILIENCE. Each claim names its test.
 
-**JCS byte-for-byte** — the judge recomputes every record hash the way core does; checked on 3,000 random numbers.
+**2 blockers** — found by an adversarial review of the whole repo. Fixed before merge.
 
-**Six runtime deps** — pydantic, httpx, weave, openai, fastapi, uvicorn. No template engine, no frontend framework.
+**2 known gaps** — ptrace on the agent's box; a world-readable env on the platform. Written down, reported.
 
-Note: This is the production-readiness slide in the judges' own terms. If there is one thing to click, click the docs job: it fails if a test named in the docs stops existing. Video: 2:50-2:55.
-
----
-
-class: ledger
-fragments: off
-
-# What is new, what is borrowed, what is not done
-
-## Built for this hackathon
-- the judge worker, reviewer port, notifier
-- Weave feedback and the evaluation
-- the operator console and CLI
-- the hermetic demo and its smoke
-- the four documents and the refutation fixes
-
-## Pre-existing, run unchanged
-- approval.md core: policy, gate, hash-chained log, Telegram
-- the hosted daemon and gated Hermes images
-- judgy's reviewer schema and prompt (September 12 to 13)
-
-## Not yet
-- the judge live on Maritime beside the dogfood tenant (build blocked on repo access)
-- the console on its own origin in production
-- learning: decisions are measured, the reviewer is not retrained
-
-Note: Say the third column plainly. The measured gap between "runs in Docker" and "runs on Maritime" is a GitHub App permission, not code, and the deploy doc is written. Video: skip, unless there is time; the honesty lands well.
+Note: The judging criteria, in order: resilience, code quality, repo build, ease of review. The docs job fails if a test named in the docs stops existing. Video: 2:34-2:46.
 
 ---
 
@@ -246,27 +293,25 @@ qr: {{REPO_LINK}}
 qr-caption: Run it in ten seconds
 fragments: off
 
-# Run it yourself
+# Run it
 
 - **1.** `make setup && make demo`. Two URLs print: the approver chat and the console.
-- **2.** Tap Reject, Approve, Reject. Watch the agent print BLOCKED, ALLOWED, BLOCKED.
-- **3.** Open the W&B project: traces, feedback, the evaluation call. All linked from the README.
-- **4.** `make lint typecheck test` and `python3 scripts/check_docs.py`. Green is the claim.
+- **2.** Tap Reject, Approve, Reject. The agent prints BLOCKED, ALLOWED, BLOCKED.
+- **3.** Open the W&B project: traces, your taps as feedback, the evaluation.
+- **4.** `make lint typecheck test`. Green is the claim.
 
 W&B project: wandb.ai/bountify/judgy
 
-Note: Replace the QR placeholder with the repo link before submitting. If the judge is deployed on Maritime by then, add the live variant from docs/demo-script.md. Video: 2:55-3:00, the closing frame.
+Note: Replace the QR placeholder with the repo link before submitting. Live variant: `approved ask` against the gated agent on Maritime with a real phone, if the judge is deployed; the beats are the same as scene one. Video: 2:46-2:56.
 
 ---
 
-class: end
+class: stamp
 
-# The judge recommends. You decide.
+# Approved
 
-Approved is approval.md, hosted, with an advisory judge measured against the people it advises.
-
-**Repo, W&B project and a 90-second demo in the README.**
+## The judge recommends. You decide.
 
 approval.md · wandb.ai/bountify/judgy
 
-Note: Closing line. Do not say the judge learns; say it is measured. Do not say the deploy is live unless it is. Video: the last frame.
+Note: Let the stamp land. Stop talking. Video: 2:56-3:00.

@@ -6,7 +6,7 @@
  * Key lines sit at the top of a slide, one per line, in their own block (a blank line before
  * the heading):
  *
- *   class: title|big|split|chat|code|join|end
+ *   class: title|big|split|chat|scene|code|hero|grid|ledger|join|end|stamp|meme|logos
  *                       the slide's layout (a class on <section>)
  *   badge: text         a sticker badge in the slide corner; anything but "live" is loud amber
  *   qr: value           a large QR code sticker. value is an https:, tg: or mailto: link, or a
@@ -25,12 +25,15 @@
  *
  * And in the slide body:
  *
- *   ```chat             a Telegram thread (assets/chat.js: gate>, judge>, agent>, human>);
- *                       every bubble is a fragment
+ *   ```chat             a Telegram thread (assets/chat.js: gate>, judge>, agent>, human>,
+ *                       system>, buttons>, badge>, and the stamps held>, blocked>, stamp>,
+ *                       verdict>); every message is a fragment
  *   ```lang             in a split or code slide, a code sticker in the right-hand column
  *   bullets             each item is a fragment
- *   **Title** — body    in the right-hand column of split/chat/code: a stat sticker; loud
- *                       (dashed amber) when the title starts "Known gap" or contains "FAIL"
+ *   **Title** — body    in the right-hand column of split/chat/scene/code: a stat sticker;
+ *                       loud (dashed amber) when the title starts "Known gap" or contains
+ *                       "FAIL". On split and grid a title that starts with a number
+ *                       ("43,776", "1.0", "0 of 7", "2.1 s") counts up from 0 when shown
  *   ![alt](x.svg)       an SVG image is a diagram: no keyline, shadow or backing
  *   {{PLACEHOLDER}}     anywhere in the text: a dashed gold chip
  *
@@ -39,6 +42,27 @@
  * block as the right-hand sticker); join puts the QR sticker on the left (about 45%) and the
  * heading, paragraphs and bullets on the right; big is a shout (one heading, one paragraph)
  * sized for the back of the room.
+ *
+ * More layouts:
+ *   scene   chat, but the thread autoplays: on arrival its fragments reveal one every 900ms
+ *           (reveal.js's nextFragment(), only while the slide is current). → still steps and
+ *           the timer restarts from the new index; ← pauses it; leaving the slide stops it. A
+ *           "▶ autoplay" chip (.autoplay-chip) sits in the top left corner and reads "▶ auto"
+ *           (.is-playing) while the timer runs. Reduced motion: every bubble shown, no timer.
+ *   stamp   a dark full-bleed slide; "# heading" is a rubber stamp that slams in, "## heading"
+ *           and paragraphs fade in under it.
+ *   meme    "# heading", then "## nope" + a list and "## yep" + a list: two sticker rows with a
+ *           reaction figure (assets/nope.svg, assets/yep.svg) left; the "##" lines are not
+ *           shown. Each row is a fragment; the yep row pops.
+ *   logos   heading on top; every top-level bullet is a big pill chip that bounces in; a
+ *           paragraph after the list sits under the chips.
+ *
+ * Motion (all of it off under prefers-reduced-motion and in ?print-pdf): the current slide gets
+ * .is-shown, removed and re-added on every visit, so the CSS animations keyed on it replay (the
+ * stamp slam, the big-slide paragraph and code-sticker wipes, still stamps in a thread). Stat
+ * counters, the thread buzz when a held>/blocked> stamp shows, and the scene autoplay run on
+ * reveal.js's slidechanged / fragmentshown events. assets/loop.svg draws its own arrows; its
+ * <img> src gets a fresh "#t=" fragment on each show so the drawing replays.
  *
  * Key lines are stripped from the rendered slide. Everything from the Markdown reaches the DOM
  * as text or through reveal.js's own Markdown rendering; attribute values are whitelisted, and
@@ -58,9 +82,14 @@
     grid: true,
     ledger: true,
     join: true,
-    end: true
+    end: true,
+    stamp: true,
+    scene: true,
+    meme: true,
+    logos: true
   };
-  var COLUMNS = { split: true, chat: true, code: true, hero: true }; // heading left, content right
+  // heading left, content right
+  var COLUMNS = { split: true, chat: true, scene: true, code: true, hero: true };
   var KEY_LINE = /^(class|badge|qr|qr-caption|fragments):[ \t]*(.+?)[ \t]*$/;
   var PH_RE = /\{\{\s*([A-Z0-9_]+)\s*\}\}/g;
   var PH_ONE = /\{\{\s*([A-Z0-9_]+)\s*\}\}/;
@@ -69,6 +98,16 @@
   var QR_PAPER = "#ffffff";
   var QR_QUIET = 4; // quiet zone, in modules
   var SVG_NS = "http://www.w3.org/2000/svg";
+  var SCENE_STEP_MS = 900; // a scene slide reveals its next message this often
+  var COUNT_MS = 900; // a stat counter runs from 0 to its value in this long
+  // a number at the start of a stat title: "43,776", "1.0", "0 of 7", "2.1 s"
+  var COUNT_RE = /^(\s*)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?/;
+  // SVG diagrams that animate themselves (a <style> inside the file): replayed on every show
+    var REPLAY = /$^/; // nothing replays: diagrams are static and wiped in by CSS
+
+  function reduceMotion() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
 
   /** assets/ as an absolute URL, taken from this script's src while it is executing. */
   var ASSETS = (function () {
@@ -267,6 +306,120 @@
     section.insertBefore(wrap, notes);
   }
 
+  /**
+   * meme: the two-panel format. "## nope" + a list and "## yep" + a list become two sticker
+   * rows, each a reaction figure (assets/nope.svg, assets/yep.svg) left and the list right. The
+   * two headings are not rendered (each becomes its figure's alt text); each row is a fragment.
+   */
+  function memeRows(section, fragments) {
+    var grid = el("div", "meme-grid");
+    var row = null;
+    var n = 0;
+    Array.prototype.slice.call(section.children).forEach(function (node) {
+      if (node.tagName === "H2") {
+        row = null;
+        if (n >= 2) return; // a third "##" stays where it is
+        var kind = n === 0 ? "nope" : "yep";
+        n += 1;
+        row = el("div", "meme-row meme-row--" + kind);
+        if (fragments) row.classList.add("fragment");
+        var fig = el("img", "meme-fig");
+        fig.src = ASSETS + kind + ".svg";
+        fig.alt = node.textContent.trim() || kind;
+        fig.width = 190;
+        fig.height = 190;
+        row.appendChild(fig);
+        row.appendChild(el("div", "meme-list"));
+        grid.appendChild(row);
+        node.parentNode.removeChild(node);
+      } else if (row && !isAside(node)) {
+        row.lastChild.appendChild(node);
+      }
+    });
+    if (!grid.children.length) return;
+    section.insertBefore(grid, section.querySelector(":scope > aside"));
+  }
+
+  /** logos: every top-level bullet is a big pill chip in a centred, wrapping row. */
+  function logoChips(section) {
+    each(section.querySelectorAll(":scope > ul"), function (ul) {
+      ul.classList.add("logo-row");
+      each(ul.children, function (li) {
+        li.classList.add("logo-chip");
+      });
+    });
+  }
+
+  /**
+   * Stat counters: a stat title that starts with a number gets that number wrapped in
+   * <span class="count" data-count-to data-count-decimals [data-count-commas] data-count-text>.
+   * The span holds the final text, so without JS, in print and with reduced motion the value is
+   * simply there; countUp() runs it from 0 when it is shown.
+   */
+  function markCounters(section) {
+    each(section.querySelectorAll(".stat > strong:first-child"), function (strong) {
+      var t = strong.firstChild;
+      if (!t || t.nodeType !== 3) return;
+      var m = t.nodeValue.match(COUNT_RE);
+      if (!m) return;
+      var text = m[2] + (m[3] || "");
+      var span = el("span", "count", text);
+      span.setAttribute("data-count-to", m[2].replace(/,/g, "") + (m[3] || ""));
+      span.setAttribute("data-count-decimals", String(m[3] ? m[3].length - 1 : 0));
+      if (m[2].indexOf(",") !== -1) span.setAttribute("data-count-commas", "");
+      span.setAttribute("data-count-text", text);
+      var frag = document.createDocumentFragment();
+      if (m[1]) frag.appendChild(document.createTextNode(m[1]));
+      frag.appendChild(span);
+      var rest = t.nodeValue.slice(m[0].length);
+      if (rest) frag.appendChild(document.createTextNode(rest));
+      strong.replaceChild(frag, t);
+    });
+  }
+
+  function formatCount(value, decimals, commas) {
+    if (commas) {
+      return value.toLocaleString("en-US", {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      });
+    }
+    return value.toFixed(decimals);
+  }
+
+  var countFrames = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  /** Stop a running counter and show its final text. */
+  function settleCount(node) {
+    if (countFrames && countFrames.has(node)) {
+      cancelAnimationFrame(countFrames.get(node));
+      countFrames.delete(node);
+    }
+    node.textContent = node.getAttribute("data-count-text");
+  }
+
+  /** Run a counter from 0 to its value over COUNT_MS, ease-out, keeping commas and decimals. */
+  function countUp(node) {
+    settleCount(node);
+    var to = parseFloat(node.getAttribute("data-count-to"));
+    if (!countFrames || !(to > 0) || typeof requestAnimationFrame !== "function") return;
+    var decimals = parseInt(node.getAttribute("data-count-decimals"), 10) || 0;
+    var commas = node.hasAttribute("data-count-commas");
+    var start = null;
+    node.textContent = formatCount(0, decimals, commas);
+    var frame = function (now) {
+      if (start === null) start = now;
+      var t = Math.min(1, (now - start) / COUNT_MS);
+      if (t >= 1) {
+        settleCount(node);
+        return;
+      }
+      node.textContent = formatCount(to * (1 - Math.pow(1 - t, 3)), decimals, commas);
+      countFrames.set(node, requestAnimationFrame(frame));
+    };
+    countFrames.set(node, requestAnimationFrame(frame));
+  }
+
   function mascot(section) {
     var img = el("img", "deck-mascot");
     img.src = ASSETS + "wordmark.svg";
@@ -279,6 +432,7 @@
   /** An SVG image in the copy is a hand-drawn diagram, not a screenshot. */
   function markDiagrams(section) {
     each(section.querySelectorAll("img"), function (img) {
+      if (img.classList.contains("meme-fig")) return; // drawn stickers with their own sizing
       if (/\.svg([?#].*)?$/i.test(img.getAttribute("src") || "")) img.classList.add("diagram");
     });
   }
@@ -383,12 +537,18 @@
     if (!layout && keys.qr.length) layout = "join";
     if (layout) section.classList.add(layout);
     var fragments = fragmentsSetting(keys);
+    // a scene autoplays its thread; with reduced motion every bubble is simply there
+    if (layout === "scene" && reduceMotion()) fragments = false;
 
     renderChats(section, fragments);
+
+    if (layout === "meme") memeRows(section, fragments);
+    if (layout === "logos") logoChips(section);
 
     if (fragments) {
       each(section.querySelectorAll("li"), function (li) {
         if (li.parentElement && li.parentElement.closest("li")) return; // nested: part of its parent
+        if (li.closest(".meme-row")) return; // the meme row is the fragment, not its items
 
         if (!li.closest(".thread")) li.classList.add("fragment");
       });
@@ -401,6 +561,7 @@
       statParagraphs(section, fragments);
     }
     if (layout === "grid") gridStats(section, fragments);
+    if (layout === "grid" || layout === "split") markCounters(section);
     if (layout === "ledger") ledgerColumns(section);
     if (layout === "big") {
       var shout = section.querySelector(":scope > h1, :scope > h2");
@@ -421,8 +582,151 @@
     }
 
     if (layout === "title" || layout === "end") mascot(section);
+    if (layout === "scene" && fragments && section.querySelector(".thread .fragment")) {
+      var chip = el("span", "autoplay-chip", "▶ autoplay");
+      chip.setAttribute("aria-hidden", "true");
+      section.appendChild(chip);
+      section.setAttribute("data-autoplay", "");
+    }
     keys.badge.forEach(function (text) {
       addBadge(section, text);
+    });
+  }
+
+  /**
+   * Motion, driven by reveal.js events. Every slide that becomes current gets .is-shown
+   * (removed and re-added, so CSS animations keyed on it replay on each visit: the stamp slam,
+   * the typewriter wipes, still stamps in a thread). Counters, the thread buzz, self-animating
+   * SVG diagrams and the scene autoplay are started here. Nothing runs in the ?print-pdf view,
+   * and with reduced motion only .is-shown is toggled (the CSS ignores it).
+   */
+  function motion(reveal) {
+    var root = reveal.getRevealElement();
+    var print =
+      (typeof reveal.isPrintView === "function" && reveal.isPrintView()) ||
+      /[?&]print-pdf\b/.test(window.location.search);
+    var still = function () {
+      return print || reduceMotion();
+    };
+    var auto = { section: null, timer: 0, driving: false };
+
+    function remaining() {
+      var f = reveal.availableFragments();
+      return !!(f && f.next);
+    }
+
+    function chip(section, playing) {
+      var c = section && section.querySelector(":scope > .autoplay-chip");
+      if (!c) return;
+      c.textContent = playing ? "▶ auto" : "▶ autoplay";
+      c.classList.toggle("is-playing", playing);
+    }
+
+    function stopAuto() {
+      clearTimeout(auto.timer);
+      auto.timer = 0;
+      chip(auto.section, false);
+      auto.section = null;
+    }
+
+    function scheduleAuto(section) {
+      clearTimeout(auto.timer);
+      auto.section = section;
+      chip(section, true);
+      auto.timer = setTimeout(stepAuto, SCENE_STEP_MS);
+    }
+
+    /** One autoplay step: only while this scene is still current and fragments remain. */
+    function stepAuto() {
+      auto.timer = 0;
+      var section = auto.section;
+      if (!section || reveal.getCurrentSlide() !== section || !remaining()) return stopAuto();
+      if (typeof reveal.isPaused === "function" && reveal.isPaused()) return scheduleAuto(section);
+      auto.driving = true;
+      try {
+        reveal.nextFragment();
+      } finally {
+        auto.driving = false;
+      }
+      if (reveal.getCurrentSlide() === section && remaining()) scheduleAuto(section);
+      else stopAuto();
+    }
+
+    function maybeAuto(section) {
+      if (still() || !section || !section.hasAttribute("data-autoplay")) return;
+      if (reveal.getCurrentSlide() === section && remaining()) scheduleAuto(section);
+    }
+
+    function buzz(thread) {
+      if (!thread || still()) return;
+      thread.classList.remove("is-buzzing");
+      void thread.offsetWidth; // restart the animation
+      thread.classList.add("is-buzzing");
+    }
+
+    function replayDiagrams(section) {
+      each(section.querySelectorAll("img.diagram"), function (img) {
+        var base = (img.getAttribute("src") || "").split("#")[0];
+        if (!REPLAY.test(base.split("?")[0])) return;
+        img.setAttribute("src", base + "#t=" + Date.now());
+      });
+    }
+
+    function onShow(current) {
+      stopAuto();
+      each(root.querySelectorAll(".slides section.is-shown"), function (s) {
+        if (s === current) return;
+        s.classList.remove("is-shown");
+        each(s.querySelectorAll(".count"), settleCount);
+      });
+      if (!current) return;
+      current.classList.remove("is-shown");
+      void current.offsetWidth; // restart the CSS animations keyed on .is-shown
+      current.classList.add("is-shown");
+      if (still()) return;
+      replayDiagrams(current);
+      each(current.querySelectorAll(".count"), function (c) {
+        if (!c.closest(".fragment")) countUp(c);
+      });
+      each(current.querySelectorAll(".thread"), function (t) {
+        if (t.querySelector(".msg--buzz:not(.fragment)")) buzz(t);
+      });
+      // after reveal.js has finished this navigation (it may still sync fragments in this task)
+      setTimeout(function () {
+        maybeAuto(current);
+      }, 0);
+    }
+
+    reveal.on("ready", function (e) {
+      onShow(e.currentSlide || reveal.getCurrentSlide());
+    });
+    reveal.on("slidechanged", function (e) {
+      onShow(e.currentSlide);
+    });
+    reveal.on("fragmentshown", function (e) {
+      var shown = e.fragments || (e.fragment ? [e.fragment] : []);
+      if (!still()) {
+        each(shown, function (f) {
+          if (f.classList.contains("msg--buzz")) buzz(f.closest(".thread"));
+          if (f.classList.contains("count")) countUp(f);
+          each(f.querySelectorAll(".count"), countUp);
+        });
+      }
+      // a fragment the presenter showed (→): carry on autoplaying from the new index
+      if (!auto.driving) {
+        stopAuto();
+        maybeAuto(reveal.getCurrentSlide());
+      }
+    });
+    reveal.on("fragmenthidden", function (e) {
+      var hidden = e.fragments || (e.fragment ? [e.fragment] : []);
+      each(hidden, function (f) {
+        each(f.querySelectorAll(".count"), settleCount);
+      });
+      if (!auto.driving) stopAuto(); // stepping back (←) pauses the autoplay; → resumes it
+    });
+    root.addEventListener("animationend", function (e) {
+      if (e.animationName === "buzz" && e.target.classList) e.target.classList.remove("is-buzzing");
     });
   }
 
@@ -435,6 +739,7 @@
           if (section.querySelector("section")) return; // a vertical stack wrapper
           processSlide(section);
         });
+        motion(reveal);
       }
     };
   };
