@@ -2,7 +2,7 @@
 
 const ROUTES = Object.freeze({
   '/': 'GET', '/health': 'GET', '/api/session': 'POST',
-  '/api/state': 'GET', '/api/run': 'POST', '/api/reset': 'POST',
+  '/api/state': 'GET', '/api/policy': 'GET', '/api/run': 'POST', '/api/reset': 'POST',
   '/approver/api/chat': 'GET', '/approver/api/tap': 'POST',
 });
 const MAX_BODY = {'/api/session':256, '/api/run':256, '/api/reset':256, '/approver/api/tap':1024};
@@ -44,7 +44,7 @@ function getSession(req) {
 async function proxy(req, res, path, env=process.env, fetcher=fetch, timeoutMs=15000) {
   headers(res, path === '/');
   if (!Object.hasOwn(ROUTES, path)) return failure(res, 404, 'Not found.');
-  if (req.method !== ROUTES[path]) {res.setHeader('Allow', ROUTES[path]);return failure(res, 405, 'Method not allowed.');}
+  if (req.method !== ROUTES[path] && !(path === '/api/policy' && req.method === 'HEAD')) {res.setHeader('Allow', path === '/api/policy' ? 'GET, HEAD' : ROUTES[path]);return failure(res, 405, 'Method not allowed.');}
   if (!allowedQuery(path, req.url)) return failure(res, 400, 'Query not allowed.');
   if (path === '/') return servePage(res);
   let origin;
@@ -96,7 +96,7 @@ async function proxy(req, res, path, env=process.env, fetcher=fetch, timeoutMs=1
     }
     const expected = path === '/' ? 'text/html' : 'application/json';
     if (!(upstream.headers.get('content-type') || '').toLowerCase().startsWith(expected)) return failure(res,502,'The demo returned an invalid response.');
-    const bytes = await readBounded(upstream, MAX_RESPONSE);
+    const bytes = await readBounded(upstream, path === '/api/policy' ? 128 * 1024 : MAX_RESPONSE);
     if (path === '/') {
       const page = bytes.toString('utf8');
       const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
