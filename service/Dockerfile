@@ -24,5 +24,5 @@ USER approved
 ENV PATH=/app/.venv/bin:$PATH \
     STATE_DIR=/state
 VOLUME ["/state"]
-ENTRYPOINT ["python", "-m", "approved"]
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "approved"]
 CMD ["worker"]

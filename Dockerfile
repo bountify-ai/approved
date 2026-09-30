@@ -25,5 +25,8 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH=/app/.venv/bin:$PATH \
     STATE_DIR=/data/judge
-ENTRYPOINT ["python", "-m", "approved"]
+# Absolute interpreter path: Maritime's init re-launches the image command
+# with its own PATH, so a bare `python` resolved to the system interpreter,
+# which has no `approved` module (seen 2026-09-29).
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "approved"]
 CMD ["serve"]
