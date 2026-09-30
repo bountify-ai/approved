@@ -289,7 +289,7 @@ Note: The judging criteria, in order: resilience, code quality, repo build, ease
 ---
 
 class: join
-qr: https://github.com/bountify-ai/approved
+qr: https://approval.md/approved/
 qr-caption: Run it in ten seconds
 fragments: off
 
@@ -300,7 +300,7 @@ fragments: off
 - **3.** Open the W&B project: traces, your taps as feedback, the evaluation.
 - **4.** `make lint typecheck test`. Green is the claim.
 
-Everything in one place: https://approval.md/approved/
+Repo, deck, W&B project and the evaluation are all linked from there.
 
 Note: Replace the QR placeholder with the repo link before submitting. Live variant: `approved ask` against the gated agent on Maritime with a real phone, if the judge is deployed; the beats are the same as scene one. Video: 2:46-2:56.
 
