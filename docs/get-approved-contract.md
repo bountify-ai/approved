@@ -62,6 +62,14 @@ names, capped to the latest 20 entries. No raw process logs, credentials, intern
 provider usage estimates, or another visitor's state reach this view. CPU, memory, cost,
 and model call progress must not be inferred from a started process or a pending scenario.
 
+The visitor may separately request the current APPROVAL.md file for their own ready
+session. This fixed authenticated read returns at most 16 KiB of UTF-8 plaintext, its
+actual VPS path, and a SHA-256 digest of those exact bytes. The path is shown because
+the visitor explicitly asked to inspect the live file; it is never accepted as input,
+included in general telemetry, or available across sessions. The display does not
+claim that the current bytes match a historic policy attestation. A symlink, non-regular
+file, oversize file, or unavailable store is refused without exposing file contents.
+
 ## Release evidence
 
 Before public exposure, run service lint/typecheck/tests, gateway security tests,

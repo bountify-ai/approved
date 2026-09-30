@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
+import stat
 import subprocess
 import threading
 import time
 from collections import deque
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -25,6 +28,7 @@ from .supervisor import Reaper, Supervisor
 SESSION_TTL_S = 15 * 60
 MAX_SESSIONS = 2
 MAX_TELEMETRY_EVENTS = 20
+MAX_POLICY_BYTES = 16 * 1024
 TELEMETRY_KINDS = frozenset(
     {
         "session_allocated",
@@ -47,6 +51,7 @@ TELEMETRY_KINDS = frozenset(
 SESSION_ROUTES = frozenset(
     {
         "/api/state",
+        "/api/policy",
         "/api/run",
         "/api/reset",
         "/approver",
@@ -67,6 +72,33 @@ def gateway_secret(env: dict[str, str]) -> str:
     if len(value) < 32:
         raise ValueError("gateway credential must contain at least 32 characters")
     return value
+
+
+def _policy_file(data: Path, visitor_id: str) -> tuple[str, bytes]:
+    """Read only this session's regular policy through no-follow directory descriptors."""
+    path = Layout(data / "tryit" / "sessions" / visitor_id).store / "APPROVAL.md"
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    with ExitStack() as stack:
+        directory = os.open(data, directory_flags)
+        stack.callback(os.close, directory)
+        for part in ("tryit", "sessions", visitor_id, "demo"):
+            directory = os.open(part, directory_flags, dir_fd=directory)
+            stack.callback(os.close, directory)
+        fd = os.open("APPROVAL.md", file_flags, dir_fd=directory)
+        stack.callback(os.close, fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_POLICY_BYTES:
+            raise ValueError("policy file is not a bounded regular file")
+        content = bytearray()
+        while len(content) <= MAX_POLICY_BYTES:
+            chunk = os.read(fd, MAX_POLICY_BYTES + 1 - len(content))
+            if not chunk:
+                break
+            content.extend(chunk)
+        if len(content) > MAX_POLICY_BYTES:
+            raise ValueError("policy file exceeds limit")
+    return str(path), bytes(content)
 
 
 @dataclass
@@ -377,6 +409,33 @@ class PrivateSessions:
             app = visitor.app
         if visitor.state == "expired":
             return _json(410, {"ok": False, "code": "session-expired", "session": lifecycle})
+        if path == "/api/policy":
+            if method not in {"GET", "HEAD"}:
+                return _error(405, "method-not-allowed", "GET only")
+            if target != path:
+                return _error(400, "query-not-allowed", "Policy path is fixed.")
+            if app is None or visitor.state != "ready":
+                return _error(503, "session-starting", "The private session is still starting.")
+            try:
+                policy_path, raw = _policy_file(self.data, visitor.id)
+                content = raw.decode("utf-8")
+            except (OSError, ValueError, UnicodeError):
+                return _error(503, "policy-unavailable", "The current policy file is unavailable.")
+            with self._lock:
+                if visitor.state != "ready" or time.time() >= visitor.expires_at:
+                    return _error(410, "session-expired", "This session expired.")
+            response = _json(
+                200,
+                {
+                    "path": policy_path,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "text": content,
+                },
+                **{"Cache-Control": "no-store"},
+            )
+            if method == "HEAD":
+                response.body = b""
+            return response
         if path == "/api/state":
             if method not in {"GET", "HEAD"}:
                 return _error(405, "method-not-allowed", "GET only")

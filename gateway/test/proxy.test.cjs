@@ -8,6 +8,22 @@ async function call(path,req={},fetcher=async()=>new Response(JSON.stringify({ok
 test('method and query allowlist reject before contacting backend',async()=>{let calls=0;const fetcher=()=>{calls++;throw Error('must not call');};for(const [path,req,code] of [['/api/run',{},405],['/api/state',{url:'/api/state?x=1'},400],['/',{url:'/?x=1'},400],['/approver/api/tap',{method:'POST',headers:{'content-type':'application/json'}},401]]){const r=await call(path,req,fetcher);assert.equal(r.statusCode,code);}assert.equal(calls,0);});
 test('session allocation injects only server credential',async()=>{let observed;const r=await call('/api/session',{method:'POST',url:'/api/session',headers:{'content-type':'application/json',cookie:'evil',authorization:'Bearer evil','x-approved-gateway':'evil'},body:{}},async(url,opts)=>{observed={url,opts};return new Response(JSON.stringify({session_token:'abc'}),{headers:{'content-type':'application/json','set-cookie':'bad=1'}});});assert.equal(r.statusCode,200);assert.equal(observed.url,'https://backend.example/api/session');assert.equal(observed.opts.headers['X-Approved-Gateway'],'server-secret');assert.equal(observed.opts.headers.Cookie,undefined);assert.equal(observed.opts.headers.Authorization,undefined);assert.equal(r.headers['set-cookie'],undefined);assert.match(r.headers['cache-control'],/no-store/);});
 test('session token is forwarded to one fixed backend route',async()=>{let observed;const session='a'.repeat(32);const r=await call('/api/state',{headers:{'x-approved-session':session}},async(url,opts)=>{observed={url,opts};return new Response('{}',{headers:{'content-type':'application/json'}});});assert.equal(r.statusCode,200);assert.equal(observed.url,'https://backend.example/api/state');assert.equal(observed.opts.headers['X-Approved-Session'],session);});
+test('policy view forwards only its fixed authenticated route and bounds the response',async()=>{
+  const session='a'.repeat(32);let observed;
+  const fetcher=async(url,opts)=>{observed={url,opts};return new Response(JSON.stringify({path:'/data/tryit/sessions/opaque/demo/APPROVAL.md',text:'policy',sha256:'a'.repeat(64)}),{headers:{'content-type':'application/json'}});};
+  assert.equal((await call('/api/policy',{},fetcher)).statusCode,401);
+  assert.equal((await call('/api/policy',{url:'/api/policy?path=../other',headers:{'x-approved-session':session}},fetcher)).statusCode,400);
+  assert.equal((await call('/api/policy',{method:'POST',headers:{'x-approved-session':session}},fetcher)).statusCode,405);
+  assert.equal((await call('/api/policy',{method:'HEAD',headers:{'x-approved-session':session}},async(url,opts)=>{observed={url,opts};return new Response(null,{headers:{'content-type':'application/json'}});})).statusCode,200);
+  const response=await call('/api/policy',{headers:{'x-approved-session':session}},fetcher);
+  assert.equal(response.statusCode,200);
+  assert.equal(observed.url,'https://backend.example/api/policy');
+  assert.equal(observed.opts.headers['X-Approved-Session'],session);
+  assert.equal(observed.opts.headers['X-Approved-Gateway'],'server-secret');
+  assert.match(response.headers['cache-control'],/no-store/);
+  const large=await call('/api/policy',{headers:{'x-approved-session':session}},async()=>new Response('x'.repeat(128*1024+1),{headers:{'content-type':'application/json'}}));
+  assert.equal(large.statusCode,502);
+});
 test('rejects oversized post and upstream redirects and hides raw errors',async()=>{const session='a'.repeat(32);let r=await call('/approver/api/tap',{method:'POST',headers:{'x-approved-session':session,'content-type':'application/json'},body:{data:'x'.repeat(2000)}},()=>{throw Error('must not call');});assert.equal(r.statusCode,413);r=await call('/health',{},async()=>new Response('',{status:302,headers:{location:'https://attacker.example'}}));assert.equal(r.statusCode,502);assert.equal(r.headers.location,undefined);r=await call('/health',{},async()=>new Response('private stack trace',{status:500}));assert.equal(r.statusCode,502);assert.doesNotMatch(r.body,/private stack trace/);});
 test('invalid configured origins fail closed',()=>{const {originFromEnv}=require('../api/_proxy.cjs');for(const value of ['http://localhost:3000','https://user:pass@host.example','https://host.example/path','https://host.example?q=1'])assert.throws(()=>originFromEnv({APPROVED_BACKEND_ORIGIN:value}));});
 
