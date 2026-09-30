@@ -203,6 +203,11 @@ class Settings:
         env.update(_DAEMON_IMAGE_ENV)
         if layout is not None:
             env["APPROVAL_DATA_DIR"] = str(layout.data)
+            # Core records Telegram bot ownership under APPROVAL_STATE_DIR. A new
+            # visitor reuses this slot's fake Bot API port and bot id, so the
+            # machine-wide default would mistake the previous visitor's claim
+            # for another live gate and refuse to start its webhook.
+            env["APPROVAL_STATE_DIR"] = str(layout.tryit / "runtime-state")
         env["PATH"] = CHILD_PATH
         env.update(credentials)
         return env

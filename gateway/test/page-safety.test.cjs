@@ -7,7 +7,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../../service/src/approved/tryit/page.py'),'utf8');
 const match=source.match(/PAGE_SCRIPT = r"""([\s\S]*?)"""/);
 assert.ok(match,'page script found');
-const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,renderRun,begin};})();');
+const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,renderRun,begin,poll,run};})();');
 const nodes=new Map();
 const document={
   querySelector(){return null;},
@@ -62,4 +62,68 @@ test('cold wake probes health twice and allocates a session once',async()=>{
   await ctx.__pageTest.begin();
   assert.deepEqual(seen,['/health','/health','/api/session','/api/state']);
   assert.equal(saved.length,1);
+});
+
+function runHarness({ready=[true],runResponses=[{status:202,body:{ok:true}}],clockStep=0}={}) {
+  const calls=[];const elements=new Map();let stateIndex=0,runIndex=0,tick=0;
+  const node=()=>({children:[],textContent:'',hidden:false,disabled:false,addEventListener(){},replaceChildren(){this.children=[];},appendChild(item){this.children.push(item);},append(...items){this.children.push(...items);},setAttribute(){}});
+  const doc={querySelector(){return null;},getElementById(id){if(!elements.has(id))elements.set(id,node());return elements.get(id);},createElement(){return node();}};
+  const fetcher=async(url,options)=>{
+    const route=new URL(url).pathname;calls.push([route,options.method]);
+    const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
+    if(route==='/health')return json({status:'ok'});
+    if(route==='/api/session')return json({session_token:'a'.repeat(43)},202);
+    if(route==='/api/state'){const isReady=ready[Math.min(stateIndex++,ready.length-1)];return json({session:{state:'ready'},health:{ok:isReady,parts:{judge:true}},run:null,record:{}});}
+    if(route==='/api/run'){const result=runResponses[Math.min(runIndex++,runResponses.length-1)];if(result.throw)throw Error('connection dropped after submit');return json(result.body,result.status);}
+    if(route==='/approver/api/chat')return json({messages:[]});
+    throw Error('unexpected route '+route);
+  };
+  const ctx={document:doc,location:{href:'https://gateway.example/'},URL,Response,Date:clockStep?{now(){tick+=clockStep;return tick;}}:Date,fetch:fetcher,sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},setInterval(){},setTimeout(fn){fn();return 0;}};
+  vm.runInNewContext(script,ctx);
+  return {ctx,calls,elements};
+}
+test('one click waits for runtime health and sends exactly one accepted run',async()=>{
+  const h=runHarness({ready:[false,false,true]});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
+  assert.equal(h.calls.filter(([route])=>route==='/api/session').length,1);
+  assert.ok(h.calls.findIndex(([route])=>route==='/api/run')>h.calls.findIndex(([route])=>route==='/api/state'));
+  assert.match(h.elements.get('notice').textContent,/Agent running/);
+});
+test('confirmed pre-execution 503 retries after a fresh state read',async()=>{
+  const h=runHarness({runResponses:[{status:503,body:{ok:false,code:'starting',message:'The demo is starting.'}},{status:202,body:{ok:true}}]});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,2);
+  assert.ok(h.calls.filter(([route])=>route==='/api/state').length>=3);
+  assert.match(h.elements.get('notice').textContent,/Agent running/);
+});
+test('ambiguous run response is never retried automatically',async()=>{
+  const h=runHarness({runResponses:[{status:502,body:{ok:false,message:'The demo did not answer.'}}]});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
+  assert.equal(h.elements.get('retry-run').hidden,true);
+  assert.match(h.elements.get('notice').textContent,/could not be confirmed/);
+});
+test('budget refusal is not retried automatically',async()=>{
+  const h=runHarness({runResponses:[{status:503,body:{ok:false,message:'The live AI demo allowance is used up.'}}]});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
+  assert.match(h.elements.get('notice').textContent,/allowance is used up/);
+});
+
+test('readiness deadline before any POST leaves manual retry available',async()=>{
+  const h=runHarness({ready:[false],clockStep:30000});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,0);
+  assert.equal(h.elements.get('retry-run').hidden,false);
+  assert.equal(h.elements.get('session-state').textContent,'Preparing approval gate');
+  assert.match(h.elements.get('notice').textContent,/90 seconds/);
+});
+test('deadline after only confirmed pre-execution refusals leaves manual retry available',async()=>{
+  const h=runHarness({ready:[true],clockStep:30000,runResponses:[{status:503,body:{ok:false,code:'starting',message:'starting'}}]});await h.ctx.__pageTest.begin();
+  assert.ok(h.calls.filter(([route])=>route==='/api/run').length>0);
+  assert.equal(h.elements.get('retry-run').hidden,false);
+  assert.match(h.elements.get('notice').textContent,/90 seconds/);
+});
+
+test('network loss after run submit never triggers another POST',async()=>{
+  const h=runHarness({runResponses:[{throw:true}]});await h.ctx.__pageTest.begin();
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
+  assert.equal(h.elements.get('retry-run').hidden,true);
+  assert.match(h.elements.get('notice').textContent,/could not be confirmed/);
 });

@@ -10,10 +10,10 @@ const MAX_RESPONSE = 1024 * 1024;
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const nodePath = require('node:path');
-function failure(res, status, message) {
+function failure(res, status, message, code) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.end(JSON.stringify({ok:false,message}));
+  res.end(JSON.stringify(code ? {ok:false,message,code} : {ok:false,message}));
 }
 function headers(res, page) {
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
@@ -87,9 +87,12 @@ async function proxy(req, res, path, env=process.env, fetcher=fetch, timeoutMs=1
         'run-in-progress':'A run is already in progress. Finish it before running again.',
         'rate-limited':'The demo is at capacity. Retry shortly.',
         'starting':'The demo is starting. Retry shortly.',
+        'session-starting':'The private session is still starting. Retry shortly.',
+        'chat-unavailable':'The approver chat is still starting. Retry shortly.',
       };
       const fallback = {401:'This session expired. Start a new one.',403:'This action was refused.',409:'A run is already in progress.',410:'This session expired. Start a new one.',429:'The demo is at capacity. Retry shortly.',503:'The live demo is unavailable. Retry later.'};
-      return failure(res,status,messages[code] || fallback[status] || 'The demo could not answer. Retry.');
+      const safeRunCode = path === '/api/run' && status === 503 && ['starting','session-starting','chat-unavailable'].includes(code) ? code : undefined;
+      return failure(res,status,messages[code] || fallback[status] || 'The demo could not answer. Retry.',safeRunCode);
     }
     const expected = path === '/' ? 'text/html' : 'application/json';
     if (!(upstream.headers.get('content-type') || '').toLowerCase().startsWith(expected)) return failure(res,502,'The demo returned an invalid response.');
