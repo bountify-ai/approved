@@ -87,8 +87,9 @@ maritime --json stop approved-judge && maritime --json start approved-judge
 1. **Health.** `curl -s https://api.maritime.sh/a/<judge-id>/health` answers
    `{"status":"ok","worker":{"running":true,"chain":"verified"}}`. A `503` with
    `"status":"degraded"` names the reason (for example `chain-break`).
-2. **Console.** `https://api.maritime.sh/a/<judge-id>/` redirects to `/a/<judge-id>/login`;
-   sign in with the console token and the live view shows the follow as `ok`.
+2. **Console.** Not reachable through Maritime's public URL (see "Shared origin, and no
+   cookies" below). On its own domain, `/` redirects to `/login`; sign in with the console
+   token and the live view shows the follow as `ok`.
 3. **A live advisory.** Trigger a gated request (for example
    `approved ask <tenant>-hermes "push the README fix to main"`; for a protected machine such as
    dogfood's, name it exactly: `approved ask --allow-target approval-hermes-gated
@@ -99,9 +100,18 @@ maritime --json stop approved-judge && maritime --json start approved-judge
    <https://wandb.ai/bountify/judgy>. After the approver taps, the call gains
    `approved.human_decision` and `approved.agreement` feedback.
 
-**Shared origin.** `api.maritime.sh/a/<id>` is shared with every public agent on Maritime, and
-any page on it is same-origin with the console. Use the console there for demos; in
-production put it on its own domain or set `CONSOLE_ENABLED=0` (only `/health` is served).
+**Shared origin, and no cookies.** `api.maritime.sh/a/<id>` is shared with every public agent
+on Maritime, and its proxy drops the `Cookie` header, so the console's sign-in cannot work
+through the public URL (every attempt answers "Session expired"). Only `/health` is usable
+there. Put the console on its own domain, or set `CONSOLE_ENABLED=0`.
+
+**Keep the judge awake.** Maritime sleeps an idle machine after 900 seconds, and the judge's
+outbound polling does not count as activity. A sleeping judge posts nothing. Use the always-on
+add-on, or a platform cron trigger that hits `/health` every few minutes.
+
+**Check the credential.** If `/health` stays at `"chain":"unknown"` for more than a few
+seconds, the follow is failing. The usual cause is a `TENANT_TOKEN` the daemon does not
+accept (HTTP 401 on `/log/follow`).
 
 ## 6. Switch the gated Hermes to W&B Inference (optional)
 
