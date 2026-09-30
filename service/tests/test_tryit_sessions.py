@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from approved.tryit.config import Settings
@@ -62,6 +63,102 @@ def test_private_session_gateway_capability_capacity_and_expiry(
     assert third["session_token"] not in {token1, token2}
     assert _call(app, "POST", "/api/run", token=token1)[0] == 410
     app.shutdown()
+
+
+def test_state_telemetry_is_private_bounded_and_present_during_startup(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(
+        "approved.tryit.sessions.load_scenarios",
+        lambda _path: [("push", "git push origin main", "manual")],
+    )
+
+    def provision(_self: PrivateSessions, visitor: Any) -> None:
+        visitor.provision_done.set()
+
+    monkeypatch.setattr(PrivateSessions, "_provision", provision)
+    app = PrivateSessions(Settings(port=18789), tmp_path, "gateway-secret-0123456789-0123456789")
+    first = _call(app, "POST", "/api/session")[1]["session_token"]
+    second = _call(app, "POST", "/api/session")[1]["session_token"]
+    first_state = _call(app, "GET", "/api/state", token=first)[1]
+    second_state = _call(app, "GET", "/api/state", token=second)[1]
+    assert first_state["session"]["state"] == "starting"
+    assert first_state["telemetry"]["version"] == 1
+    assert first_state["telemetry"]["session"]["ref"] != second_state["telemetry"]["session"]["ref"]
+    assert first_state["telemetry"]["runtime"]["topology"] == "one-host-isolated-processes"
+    assert "provider" not in first_state["telemetry"]["runtime"]
+    assert app._visitors[first].telemetry(maritime_deployment=True)["runtime"]["provider"] == (
+        "Maritime deployment"
+    )
+    assert all(
+        not item["running"] and not item["healthy"]
+        for item in first_state["telemetry"]["runtime"]["processes"].values()
+    )
+    assert [event["kind"] for event in first_state["telemetry"]["events"]] == ["session_allocated"]
+    visitor = app._visitors[first]
+    for _ in range(30):
+        visitor.emit("gate_unavailable")
+    visitor.sup = SimpleNamespace(  # type: ignore[assignment]
+        health=SimpleNamespace(
+            parts=lambda: {"daemon": True, "fake_telegram": False, "judge": True}
+        ),
+        daemon=SimpleNamespace(alive=True, starts=2),
+        fake_tg=SimpleNamespace(alive=False, starts=1),
+        judge=SimpleNamespace(alive=True, starts=1),
+        shutdown=lambda: None,
+    )
+    view = _call(app, "GET", "/api/state", token=first)[1]["telemetry"]
+    assert len(view["events"]) == 20
+    assert view["runtime"]["processes"]["approval_gate"] == {
+        "running": True,
+        "healthy": True,
+        "starts": 2,
+    }
+    assert view["runtime"]["processes"]["approver_chat"]["healthy"] is False
+    encoded = json.dumps(view)
+    for secret in (
+        first,
+        second,
+        visitor.id,
+        "gateway-secret-0123456789-0123456789",
+        str(tmp_path),
+    ):
+        assert secret not in encoded
+    assert _call(app, "GET", "/api/state", token="other")[0] == 401
+    assert second_state["telemetry"]["session"]["ref"] not in encoded
+    app.shutdown()
+
+
+def test_health_events_report_only_measured_transitions(monkeypatch: Any) -> None:
+    from approved.tryit.supervisor import HealthProbe
+
+    healthy = {"daemon": False, "fake_telegram": False, "judge": False}
+    events: list[tuple[str, bool]] = []
+
+    def probe(url: str) -> tuple[int, dict[str, str]]:
+        if ":18000/" in url:
+            return (
+                200 if healthy["daemon"] else 503,
+                {"facade": "listening", "webhook": "running"},
+            )
+        part = "fake_telegram" if ":18001/" in url else "judge"
+        return (200 if healthy[part] else 503, {})
+
+    monkeypatch.setattr("approved.tryit.supervisor.get_json", probe)
+    probe_state = HealthProbe(
+        settings=Settings(port=18789, daemon_port=18000, fake_tg_port=18001, judge_port=18002),
+        on_change=lambda part, up: events.append((part, up)),
+    )
+    probe_state.check_once()
+    assert events == []
+    healthy.update({"daemon": True, "fake_telegram": True, "judge": True})
+    probe_state.check_once()
+    assert events == [("daemon", True), ("fake_telegram", True), ("judge", True)]
+    healthy["judge"] = False
+    probe_state.check_once()
+    probe_state.check_once()
+    assert events[-1] == ("judge", False)
+    assert len(events) == 4
 
 
 def test_live_budget_lifetime_survives_utc_rollover_and_restart(tmp_path: Path) -> None:
@@ -227,6 +324,7 @@ def test_required_child_timeout_refuses_ready_state(tmp_path: Path, monkeypatch:
         sup.layout = Layout(tmp_path / missing)
         sup.layout.data.mkdir()
         sup.booted = False
+        sup._on_event = None
         sup.boot_error = None
         sup.fake_tg_generation = 0
         sup.fake_tg = Child()  # type: ignore[assignment]

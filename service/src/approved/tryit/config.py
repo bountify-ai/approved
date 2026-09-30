@@ -177,6 +177,8 @@ class Settings:
     weave_project: str = "bountify/judgy"
     frame_ancestors: tuple[str, ...] = ("https://approval.md",)
     public_base_path: str = ""
+    #: Explicit deployment fact for public telemetry; local image runs leave it unset.
+    maritime_deployment: bool = False
     #: The live variables to hand the judge. Values never appear in a repr.
     live_env: Mapping[str, str] = field(default_factory=dict, repr=False)
 
@@ -340,5 +342,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         weave_project=weave_project,
         frame_ancestors=ancestors,
         public_base_path=base,
+        maritime_deployment=_bool(environ, "TRYIT_MARITIME_DEPLOYMENT"),
         live_env={n: environ[n] for n in LIVE_PASSTHROUGH if _clean(environ, n)},
     )

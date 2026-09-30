@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import secrets
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,26 @@ from .supervisor import Reaper, Supervisor
 
 SESSION_TTL_S = 15 * 60
 MAX_SESSIONS = 2
+MAX_TELEMETRY_EVENTS = 20
+TELEMETRY_KINDS = frozenset(
+    {
+        "session_allocated",
+        "store_ready",
+        "approver_started",
+        "approver_healthy",
+        "approver_unavailable",
+        "approver_failed",
+        "gate_started",
+        "gate_healthy",
+        "gate_unavailable",
+        "gate_failed",
+        "judge_started",
+        "judge_healthy",
+        "judge_unavailable",
+        "runtime_ready",
+        "startup_failed",
+    }
+)
 SESSION_ROUTES = frozenset(
     {
         "/api/state",
@@ -53,6 +75,8 @@ class Visitor:
     token: str = field(repr=False)
     slot: int = 0
     expires_at: float = 0.0
+    created_at: float = field(default_factory=time.time)
+    created_monotonic: float = field(default_factory=time.monotonic, repr=False)
     state: str = "starting"
     message: str = "Preparing your private demo."
     app: App | None = None
@@ -62,6 +86,10 @@ class Visitor:
     released: threading.Event = field(default_factory=threading.Event, repr=False)
     provision_done: threading.Event = field(default_factory=threading.Event, repr=False)
     cleanup_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    event_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    events: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=MAX_TELEMETRY_EVENTS), repr=False
+    )
 
     def lifecycle(self) -> dict[str, Any]:
         return {
@@ -69,6 +97,47 @@ class Visitor:
             "expires_at": self.expires_at,
             "retryable": self.state in {"failed", "expired"},
             "message": self.message,
+        }
+
+    def emit(self, kind: str) -> None:
+        if kind not in TELEMETRY_KINDS:
+            raise ValueError("unrecognized demo telemetry event")
+        with self.event_lock:
+            self.events.append({"at": time.time(), "kind": kind})
+
+    def telemetry(self, *, maritime_deployment: bool = False) -> dict[str, Any]:
+        sup = self.sup
+        parts = sup.health.parts() if sup is not None else {}
+        processes: dict[str, dict[str, Any]] = {}
+        for name, child, part in (
+            ("approval_gate", sup.daemon if sup else None, "daemon"),
+            ("approver_chat", sup.fake_tg if sup else None, "fake_telegram"),
+            ("ai_judge", sup.judge if sup else None, "judge"),
+        ):
+            running = bool(child and child.alive)
+            processes[name] = {
+                "running": running,
+                "healthy": running and bool(parts.get(part)),
+                "starts": child.starts if child else 0,
+            }
+        with self.event_lock:
+            events = list(self.events)
+        runtime: dict[str, Any] = {
+            "topology": "one-host-isolated-processes",
+            "processes": processes,
+        }
+        if maritime_deployment:
+            runtime["provider"] = "Maritime deployment"
+        return {
+            "version": 1,
+            "session": {
+                "ref": hashlib.sha256(self.id.encode("ascii")).hexdigest()[:12],
+                "created_at": self.created_at,
+                "elapsed_s": max(0, int(time.monotonic() - self.created_monotonic)),
+                "expires_at": self.expires_at,
+            },
+            "runtime": runtime,
+            "events": events,
         }
 
 
@@ -174,6 +243,7 @@ class PrivateSessions:
                 slot=free,
                 expires_at=time.time() + SESSION_TTL_S,
             )
+            visitor.emit("session_allocated")
             self._visitors[visitor.token] = visitor
             threading.Thread(target=self._provision, args=(visitor,), daemon=True).start()
         return _json(
@@ -184,7 +254,7 @@ class PrivateSessions:
         settings = self._ports(visitor.slot)
         layout = Layout(self.data / "tryit" / "sessions" / visitor.id)
         try:
-            sup = Supervisor(settings, layout, self._reaper)
+            sup = Supervisor(settings, layout, self._reaper, on_event=visitor.emit)
             visitor.sup = sup
             sup.boot(visitor.stop, judge_live=True)
             if visitor.stop.is_set():
@@ -246,6 +316,7 @@ class PrivateSessions:
             with self._lock:
                 visitor.state = "failed"
                 visitor.message = "The private demo could not start. Try a new session."
+                visitor.emit("startup_failed")
             visitor.stop.set()
         finally:
             visitor.provision_done.set()
@@ -310,9 +381,20 @@ class PrivateSessions:
             if method not in {"GET", "HEAD"}:
                 return _error(405, "method-not-allowed", "GET only")
             if app is None or visitor.state != "ready":
-                return _json(200, {"session": lifecycle})
+                return _json(
+                    200,
+                    {
+                        "session": lifecycle,
+                        "telemetry": visitor.telemetry(
+                            maritime_deployment=self.settings.maritime_deployment
+                        ),
+                    },
+                )
             state = json.loads(app.state(b"").body)
             state["session"] = lifecycle
+            state["telemetry"] = visitor.telemetry(
+                maritime_deployment=self.settings.maritime_deployment
+            )
             return _json(200, state)
         if app is None or visitor.state != "ready":
             return _json(503, {"ok": False, "code": "session-starting", "session": lifecycle})

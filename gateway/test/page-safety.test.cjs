@@ -7,12 +7,12 @@ const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../../service/src/approved/tryit/page.py'),'utf8');
 const match=source.match(/PAGE_SCRIPT = r"""([\s\S]*?)"""/);
 assert.ok(match,'page script found');
-const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,renderRun,begin,poll,run};})();');
+const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTelegram,traceLink,status,renderRun,renderChat,renderTelemetry,clearSession,begin,poll,run};})();');
 const nodes=new Map();
 const document={
   querySelector(){return null;},
-  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],addEventListener(){},replaceChildren(){this.children=[];},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},setAttribute(){},textContent:'',hidden:false});return nodes.get(id);},
-  createElement(tag){return {tagName:tag,children:[],textContent:'',className:'',appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);}};},
+  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],addEventListener(){},replaceChildren(...items){this.children=items;},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},querySelector(sel){return this.children.find(n=>sel==='details.history'?n.className==='history':n.className==='current-payload');},setAttribute(){},textContent:'',hidden:false});return nodes.get(id);},
+  createElement(tag){return {tagName:tag,children:[],textContent:'',className:'',addEventListener(){},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);}};},
 };
 const context={document,location:{href:'https://gateway.example/'},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},URL,setInterval(){}};
 vm.runInNewContext(script,context);
@@ -37,6 +37,46 @@ test('checked-in gateway shell matches runtime page source',()=>{
   const {execFileSync}=require('node:child_process');
   const root=path.join(__dirname,'../..');
   assert.match(execFileSync('python3',['gateway/scripts/build-page.py','--check'],{cwd:root,encoding:'utf8'}),/matches page.py/);
+});
+test('current approval context stays visible and payload/history details stay open',()=>{
+  const chat=context.__pageTest.renderChat;
+  const messages=[
+    {bot:'gate',text:'old outcome',buttons:[]},
+    {bot:'judge',text:'Judge (advisory AI): vcs.push.main',buttons:[]},
+    {bot:'gate',text:'<b>APPROVAL REQUIRED</b>\nClass: vcs.push.main\nCommand: git push origin main\nContext: demo branch',buttons:[]},
+    {bot:'gate',text:'<b>PAYLOAD — the canonical rendering this approval display_hash names; raw bytes at the store path inside</b>\nAPPROVAL REQUIRED appears in data',buttons:[]},
+    {bot:'gate',text:'<b>WHAT THIS DOES</b>\nMoves main',buttons:[{text:'Approve',data:'g:1:ab'}]},
+  ];
+  chat({messages});
+  const box=nodes.get('chat');
+  assert.equal(box.children[0].className,'history');
+  assert.match(box.children[2].children[1].textContent,/Class: vcs.push.main/);
+  assert.match(box.children[2].children[1].textContent,/Context: demo branch/);
+  assert.equal(box.children[3].className,'current-payload');
+  assert.match(box.children[3].children[0].textContent,/Canonical request payload/);
+  assert.match(box.children[3].children[1].children[1].textContent,/APPROVAL REQUIRED appears in data/);
+  box.children[0].open=true;
+  box.children[3].open=true;
+  chat({messages:[...messages,{bot:'judge',text:'Advisory update',buttons:[]}]});
+  assert.equal(box.children[0].open,true);
+  assert.equal(box.querySelector('details.current-payload').open,true);
+});
+test('session telemetry uses measured status and clears after expiry',()=>{
+  context.__pageTest.renderTelemetry({
+    telemetry:{version:1,session:{ref:'abc123',elapsed_s:42},runtime:{processes:{
+      approval_gate:{running:true,healthy:true},approver_chat:{running:true,healthy:false},ai_judge:{running:false,healthy:false},
+    }},events:[{kind:'gate_healthy',at:1}]},
+    reviewer:{label:'Live reviewer: W&B Inference (model)'},record:{log_verify:{status:'ok',records:3}},
+  });
+  assert.match(nodes.get('ops-session').textContent,/abc123/);
+  assert.match(nodes.get('ops-processes').children[1].children[1].textContent,/unavailable/);
+  assert.match(nodes.get('ops-processes').children[0].children[1].className,/status$/);
+  assert.match(nodes.get('ops-processes').children[2].children[1].className,/wait/);
+  assert.match(context.__pageTest.status('stopped').className,/wait/);
+  assert.match(nodes.get('ops-proof').textContent,/3 records/);
+  context.__pageTest.clearSession();
+  assert.match(nodes.get('ops-session').textContent,/Start a session/);
+  assert.equal(nodes.get('ops-processes').children.length,1);
 });
 
 test('judge absence reason is visible as text while the run waits for a human',()=>{
