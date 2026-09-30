@@ -102,7 +102,7 @@ maritime --json stop approved-judge && maritime --json start approved-judge
    approval)" with a `Trace:` link. Weave is initialised when the worker starts; the review
    itself can still take tens of seconds with a reasoning model on W&B Inference (the first
    live call outlived the old 25 s default). The reviewer's deadline, `JUDGE_TIMEOUT_S`,
-   defaults to 60 s; a call that outlives it sends no message and is shown as
+   defaults to 60 s (at most 300 s; a larger value is refused at start); a call that outlives it sends no message and is shown as
    `silent: timeout` in the console. Raise it if a slow model is often silent, knowing that a
    review holds the judge's follow while it runs (see
    [RESILIENCE.md](../RESILIENCE.md#the-judge-reads-between-hook-calls)).

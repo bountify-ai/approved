@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from approved.config import ConfigError, load_settings
+from approved.config import ConfigError, load_inference_settings, load_settings
 
 BASE = {"FACADE_URL": "https://facade.test/a/t/", "TENANT_TOKEN": "inline-tenant-credential"}
 
@@ -144,3 +144,40 @@ def test_a_single_label_http_facade_needs_an_explicit_opt_in() -> None:
     with pytest.raises(ConfigError, match="ALLOW_INSECURE_FACADE"):
         load_settings(env)
     assert load_settings({**env, "ALLOW_INSECURE_FACADE": "1"}).facade_url == "http://daemon:8080"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("JUDGE_TIMEOUT_S", "inf"),
+        ("JUDGE_TIMEOUT_S", "Infinity"),
+        ("JUDGE_TIMEOUT_S", "nan"),
+        ("JUDGE_TIMEOUT_S", "300.5"),
+        ("JUDGE_TIMEOUT_S", "1e9"),
+        ("HTTP_TIMEOUT_S", "inf"),
+        ("HTTP_TIMEOUT_S", "121"),
+        ("FEEDBACK_TIMEOUT_S", "inf"),
+        ("FEEDBACK_TIMEOUT_S", "86400"),
+    ],
+)
+def test_timeouts_are_bounded_and_the_refusal_names_the_variable(name: str, value: str) -> None:
+    with pytest.raises(ConfigError) as refused:
+        load_settings({**BASE, "OFFLINE": "1", name: value})
+    assert name in str(refused.value)
+    assert value not in str(refused.value)  # the message names variables, never values
+    if name == "JUDGE_TIMEOUT_S":
+        with pytest.raises(ConfigError, match=name):
+            load_inference_settings({"OFFLINE": "1", name: value})
+
+
+def test_timeout_bounds_are_inclusive() -> None:
+    s = load_settings(
+        {
+            **BASE,
+            "OFFLINE": "1",
+            "JUDGE_TIMEOUT_S": "300",
+            "HTTP_TIMEOUT_S": "120",
+            "FEEDBACK_TIMEOUT_S": "120",
+        }
+    )
+    assert (s.judge_timeout_s, s.http_timeout_s, s.feedback_timeout_s) == (300, 120, 120)

@@ -64,6 +64,35 @@ _M = TypeVar("_M", bound=BaseModel)
 
 PositiveFloat = Annotated[float, Field(gt=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
+#: Upper bounds refuse ``inf`` (and ``nan``, which fails every comparison) and absurd values
+#: at startup, before a deadline or a join (``serve`` waits JUDGE_TIMEOUT_S + HTTP_TIMEOUT_S)
+#: could hang on them.
+MAX_JUDGE_TIMEOUT_S = 300.0
+MAX_HTTP_TIMEOUT_S = 120.0
+MAX_FEEDBACK_TIMEOUT_S = 120.0
+
+#: Optional variables and the field each one sets. Also used to name the variable (never the
+#: value) when a setting is refused.
+_INFERENCE_OPTIONAL = {
+    "inference_base_url": "INFERENCE_BASE_URL",
+    "judge_timeout_s": "JUDGE_TIMEOUT_S",
+}
+_WORKER_OPTIONAL = {
+    "tg_api_base": "TG_API_BASE",
+    "state_dir": "STATE_DIR",
+    "judge_max_age_s": "JUDGE_MAX_AGE_S",
+    "poll_interval_s": "POLL_INTERVAL_S",
+    "follow_limit": "FOLLOW_LIMIT",
+    "http_timeout_s": "HTTP_TIMEOUT_S",
+    "breaker_threshold": "BREAKER_THRESHOLD",
+    "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
+    "feedback_timeout_s": "FEEDBACK_TIMEOUT_S",
+    "console_host": "CONSOLE_HOST",
+    "trusted_proxy_hops": "TRUSTED_PROXY_HOPS",
+    # A platform-injected PORT wins over CONSOLE_PORT (see load_settings).
+    "console_port": "CONSOLE_PORT",
+}
+_FIELD_ENV = {**_INFERENCE_OPTIONAL, **_WORKER_OPTIONAL, "console_port": "CONSOLE_PORT or PORT"}
 
 
 class ConfigError(ValueError):
@@ -84,9 +113,9 @@ class InferenceSettings(BaseModel):
     reviewer_model: str | None = None
 
     offline: bool = False
-    # 60 s: a reasoning model on W&B Inference outlived 25 s on the first live call, which
-    # also initialises Weave. The judge is advisory, so a slow verdict delays nothing.
-    judge_timeout_s: PositiveFloat = 60.0
+    # 60 s: a reasoning model on W&B Inference outlived 25 s on the first live call. The
+    # judge is advisory, so a slow verdict delays no approval (it does hold the follow).
+    judge_timeout_s: Annotated[float, Field(gt=0, le=MAX_JUDGE_TIMEOUT_S)] = 60.0
 
     @property
     def weave_project(self) -> str:
@@ -121,10 +150,10 @@ class Settings(InferenceSettings):
     #: Must exceed the facade's hook wait (APPROVAL_SERVE_HOOK_TIMEOUT, 12 s recommended):
     #: `approval serve` answers one call at a time, so a follow can queue behind a hook call
     #: that is waiting for a human, and it should be answered when that wait ends.
-    http_timeout_s: PositiveFloat = 20.0
+    http_timeout_s: Annotated[float, Field(gt=0, le=MAX_HTTP_TIMEOUT_S)] = 20.0
     breaker_threshold: PositiveInt = 3
     breaker_cooldown_s: PositiveFloat = 60.0
-    feedback_timeout_s: PositiveFloat = 15.0
+    feedback_timeout_s: Annotated[float, Field(gt=0, le=MAX_FEEDBACK_TIMEOUT_S)] = 15.0
 
     #: Operator console (``python -m approved serve``). The token gates every page except
     #: /policy and /health; without one the console starts only in demo mode.
@@ -252,8 +281,7 @@ def _inference_fields(environ: Mapping[str, str], *, offline: bool) -> dict[str,
         "reviewer_model": reviewer_model,
         "offline": offline,
     }
-    _optional(environ, raw, {"inference_base_url": "INFERENCE_BASE_URL"})
-    _optional(environ, raw, {"judge_timeout_s": "JUDGE_TIMEOUT_S"})
+    _optional(environ, raw, _INFERENCE_OPTIONAL)
     return raw
 
 
@@ -268,9 +296,10 @@ def _validate(model: type[_M], raw: dict[str, object]) -> _M:
     try:
         return model.model_validate(raw)
     except ValidationError as exc:
-        # pydantic's message can echo input values; name the fields only.
+        # pydantic's message can echo input values; name the fields (and their variables) only.
         fields = sorted({str(err["loc"][0]) for err in exc.errors() if err["loc"]})
-        raise ConfigError(f"invalid settings: {', '.join(fields) or 'unknown field'}") from None
+        named = [f"{f} ({_FIELD_ENV[f]})" if f in _FIELD_ENV else f for f in fields]
+        raise ConfigError(f"invalid settings: {', '.join(named) or 'unknown field'}") from None
 
 
 def load_inference_settings(
@@ -320,24 +349,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "public_base_path": _clean(environ.get("PUBLIC_BASE_PATH")) or "",
         }
     )
-    _optional(
-        environ,
-        raw,
-        {
-            "tg_api_base": "TG_API_BASE",
-            "state_dir": "STATE_DIR",
-            "judge_max_age_s": "JUDGE_MAX_AGE_S",
-            "poll_interval_s": "POLL_INTERVAL_S",
-            "follow_limit": "FOLLOW_LIMIT",
-            "http_timeout_s": "HTTP_TIMEOUT_S",
-            "breaker_threshold": "BREAKER_THRESHOLD",
-            "breaker_cooldown_s": "BREAKER_COOLDOWN_S",
-            "feedback_timeout_s": "FEEDBACK_TIMEOUT_S",
-            "console_host": "CONSOLE_HOST",
-            "trusted_proxy_hops": "TRUSTED_PROXY_HOPS",
-            # A platform-injected PORT wins over CONSOLE_PORT (see below).
-            "console_port": "CONSOLE_PORT",
-        },
-    )
+    _optional(environ, raw, _WORKER_OPTIONAL)
     _optional(environ, raw, {"console_port": "PORT"})
     return _validate(Settings, raw)
