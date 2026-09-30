@@ -37,6 +37,11 @@ own `../` links (stylesheets, scripts, the Markdown path).
   the speaker view).
 - Key lines sit at the top of a slide, one per line, plain text, with a blank line before the
   heading:
+  - `class: hero|grid|ledger` are the hackathon layouts: `hero` is a stamped title on the
+    left and the slide's ```chat thread inside a phone on the right; `grid` puts the slide's
+    `**Title** — body` paragraphs in a two-up grid of stat tiles (three-up at five or more);
+    `ledger` turns each `## heading` and the list under it into one of three columns. A
+    Markdown table on a `split` slide renders as a sticker table and goes full width.
   - `class: title|big|split|chat|code|join|end` picks a layout: `title`/`end` put the
     approval.md wordmark on the right; `split`, `chat` and `code` put the heading (and a
     lead-in paragraph) on the left and the content on the right; `code` is `split` whose
