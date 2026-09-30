@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 520" width="1100" height="520" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Approved architecture</title>
+  <desc id="arch-desc">The agent machine runs Hermes with a pre_tool_call hook and an agent credential that can only request, wait and consume; it posts to /hook/hermes on the tenant daemon. The tenant daemon on Maritime runs the approval serve facade, APPROVAL.md, the hash-chained events.jsonl log and the Telegram bot, which sends Approve and Reject buttons to the human's phone. The judge service follows the log read-only with the tenant credential and posts advisories, with no buttons, from its own bot, with Weave traces and feedback. Nothing the agent holds can grant.</desc>
+  <!-- Hand-written. Explicit hex only (no currentColor), so it renders the same on the light
+       and dark deck: the diagram carries its own rounded Linen paper. Minimum text 22 units. -->
+  <defs>
+    <marker id="head-ink" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#17191D"/>
+    </marker>
+    <marker id="head-muted" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4A4F58"/>
+    </marker>
+    <style>
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Avenir Next", "Segoe UI", system-ui, Helvetica, Arial, sans-serif; }
+      .title { font-size: 24px; font-weight: 700; fill: #17191D; letter-spacing: 0.5px; }
+      .body { font-size: 22px; font-weight: 500; fill: #17191D; }
+      .sub { font-size: 22px; font-weight: 500; fill: #4A4F58; }
+      .label { font-size: 22px; font-weight: 600; fill: #17191D; }
+      .label-muted { font-size: 22px; font-weight: 500; fill: #4A4F58; font-style: italic; }
+      .tag { font-size: 26px; font-weight: 700; fill: #17191D; }
+    </style>
+  </defs>
+
+  <!-- paper -->
+  <rect x="0" y="0" width="1100" height="520" rx="28" fill="#F6F3EC"/>
+
+  <!-- phone -->
+  <rect x="530" y="16" width="48" height="82" rx="10" fill="#17191D"/>
+  <rect x="526" y="12" width="48" height="82" rx="10" fill="#FFFFFF" stroke="#17191D" stroke-width="3"/>
+  <line x1="543" y1="19" x2="557" y2="19" stroke="#17191D" stroke-width="3" stroke-linecap="round"/>
+  <rect x="532" y="25" width="36" height="58" rx="4" fill="#ECE8DF"/>
+  <path d="M539 55 L546 62 L561 44" fill="none" stroke="#17A15E" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- daemon -> phone: the only buttons that grant -->
+  <line x1="550" y1="138" x2="550" y2="100" stroke="#17191D" stroke-width="3" marker-end="url(#head-ink)"/>
+  <text x="532" y="126" text-anchor="end" class="sans label"><tspan fill="#0F7A46" font-weight="700">Approve</tspan> / <tspan fill="#C4331B" font-weight="700">Reject</tspan> (Telegram)</text>
+
+  <!-- judge -> phone: advisory text only -->
+  <path d="M926 138 V53 H586" fill="none" stroke="#4A4F58" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#head-muted)"/>
+  <text x="756" y="40" text-anchor="middle" class="sans label-muted">advisory, no buttons</text>
+
+  <!-- AGENT MACHINE -->
+  <rect x="31" y="147" width="292" height="252" rx="20" fill="#17191D"/>
+  <rect x="24" y="140" width="292" height="252" rx="20" fill="#FFFFFF" stroke="#17191D" stroke-width="3"/>
+  <text x="44" y="180" class="mono title">AGENT MACHINE</text>
+  <text x="44" y="222" class="sans body">Hermes</text>
+  <text x="44" y="252" class="mono body">pre_tool_call hook</text>
+  <text x="44" y="292" class="sans body">agent credential:</text>
+  <text x="44" y="320" class="sans sub">request, wait, consume</text>
+
+  <!-- TENANT DAEMON on Maritime -->
+  <rect x="375" y="147" width="356" height="252" rx="20" fill="#17A15E"/>
+  <rect x="368" y="140" width="356" height="252" rx="20" fill="#FFFFFF" stroke="#17191D" stroke-width="3"/>
+  <text x="388" y="180" class="mono title">TENANT DAEMON</text>
+  <text x="388" y="208" class="sans sub">on Maritime</text>
+  <text x="388" y="248" class="body"><tspan class="mono">approval serve</tspan><tspan class="sans" dx="10">facade</tspan></text>
+  <text x="388" y="276" class="mono body">APPROVAL.md</text>
+  <text x="388" y="304" class="mono body">events.jsonl</text>
+  <text x="388" y="332" class="sans sub">hash-chained log</text>
+  <text x="388" y="364" class="sans body">Telegram bot</text>
+
+  <!-- JUDGE SERVICE -->
+  <rect x="783" y="147" width="300" height="252" rx="20" fill="#17191D"/>
+  <rect x="776" y="140" width="300" height="252" rx="20" fill="#FFFFFF" stroke="#17191D" stroke-width="3"/>
+  <text x="796" y="180" class="mono title">JUDGE SERVICE</text>
+  <text x="796" y="222" class="sans body">follows the log</text>
+  <text x="796" y="250" class="sans sub">(tenant credential)</text>
+  <text x="796" y="288" class="sans body">posts advisories</text>
+  <text x="796" y="316" class="sans sub">from its own bot</text>
+  <text x="796" y="356" class="sans body">Weave traces + feedback</text>
+
+  <!-- agent -> daemon -->
+  <path d="M170 394 V420 H470 V402" fill="none" stroke="#17191D" stroke-width="3" marker-end="url(#head-ink)"/>
+  <text x="320" y="454" text-anchor="middle" class="mono label">POST /hook/hermes</text>
+
+  <!-- judge -> daemon, read only -->
+  <path d="M926 394 V420 H630 V402" fill="none" stroke="#4A4F58" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#head-muted)"/>
+  <text x="778" y="454" text-anchor="middle" class="label"><tspan class="mono">GET /log/follow</tspan><tspan class="sans" fill="#4A4F58" dx="10">(read only)</tspan></text>
+
+  <!-- the point -->
+  <text x="550" y="500" text-anchor="middle" class="sans tag">Nothing the agent holds can grant.</text>
+</svg>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 320" role="img" aria-label="approval.md">
+  <!-- approval.md wordmark: the o is a checked markdown box -->
+  <rect width="1560" height="320" fill="#F6F3EC"/>
+
+  <style>
+    .ink { font: 700 176px "JetBrains Mono","SFMono-Regular","DejaVu Sans Mono",monospace; fill:#17191D; letter-spacing: 2px; }
+    .mut { font: 700 176px "JetBrains Mono","SFMono-Regular","DejaVu Sans Mono",monospace; fill:#8A857B; }
+  </style>
+
+  <text x="72" y="222" class="ink">appr</text>
+
+  <!-- bracket-tick glyph in place of "o" (advance ~200) -->
+  <g transform="translate(516,0)">
+    <path d="M 92 78 L 34 78 L 34 250 L 92 250 L 92 222 L 64 222 L 64 106 L 92 106 Z" fill="#17191D"/>
+    <path d="M 142 78 L 200 78 L 200 250 L 142 250 L 142 222 L 170 222 L 170 106 L 142 106 Z" fill="#17191D"/>
+    <path d="M 74 176 L 116 220 L 232 80"
+          fill="none" stroke="#17A15E" stroke-width="30"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="772" y="222" class="ink">val</text>
+  <text x="1096" y="222" class="mut">.md</text>
+</svg>
