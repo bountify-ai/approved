@@ -1,6 +1,7 @@
 # The approval.md daemon image (vendored)
 
 Vendored from [bountify-ai/approval-md-hosted](https://github.com/bountify-ai/approval-md-hosted)
+(a private repository, so links into it need access)
 at commit `3d06a86eec04758645221db9c01183067cc6b00a`:
 
 | here | source | change |

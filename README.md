@@ -1,5 +1,7 @@
 # Approved
 
+[![ci](https://github.com/bountify-ai/approved/actions/workflows/ci.yml/badge.svg)](https://github.com/bountify-ai/approved/actions/workflows/ci.yml)
+
 Approved is hosted [approval.md](https://github.com/approval-md/approval.md) with an AI judge in
 the loop. approval.md turns an agent's risky tool call (a `git push`, a payment, a delete) into
 an `approval.requested` record in a hash-chained, append-only log, and a human answers it with a
@@ -10,10 +12,11 @@ Weave trace. The judge only reads the log. It never decides: the human's tap is 
 thing that grants, and the human's decision is attached to the judge's call as Weave feedback,
 so the judge is measured against people over time.
 
+W&B project (Weave traces, human feedback and the evaluation): <https://wandb.ai/bountify/judgy>.
+
 ## What you'll see (30 seconds)
 
-<!-- DEMO: GIF or video link goes here. -->
-_Demo recording: placeholder._
+Landing page: <https://approval.md/approved/>. The deck: <https://approval.md/approved/slides>.
 
 1. A scripted agent asks to run four commands. The read (`cat README.md`) runs at once.
 2. `git push origin main` is held. The approver's chat shows the gate's prompt with Approve and
@@ -62,7 +65,7 @@ Requires [uv](https://docs.astral.sh/uv/), Docker with Compose v2, `openssl` and
 ```sh
 make setup   # uv sync in service/
 make test    # pytest, with network sockets disabled
-make demo    # the whole flow locally in Docker, offline, no secrets (see demo/README.md)
+make demo    # the whole flow locally in Docker, offline, no secrets; it waits for your taps (see demo/README.md)
 ```
 
 `make demo` prints two URLs: the approver chat (a fake Telegram) at http://127.0.0.1:8090/ and
@@ -144,7 +147,7 @@ approved connect acme --facade-url https://api.maritime.sh/a/<daemon-id>
 | `service/src/approved/` | The Python package: `worker.py` (the loop), `follow.py` (log follow and chain checks), `judge.py` (timeout, breaker, Weave op), `reviewer.py` (live and offline reviewers), `notify.py`, `feedback.py`, `evaluate.py`, `state.py`, `config.py` |
 | `service/src/approved/console/` | The operator console (FastAPI): live view, policy builder, connect bundle |
 | `service/src/approved/ops/` | The operator CLI: `provision`, `connect`, `ask`, `status` |
-| `service/tests/` | 230+ tests, all with network sockets disabled; fakes for the facade, Telegram and `maritime` |
+| `service/tests/` | 360+ tests, all with network sockets disabled; fakes for the facade, Telegram and `maritime` |
 | `images/daemon/` | The approval.md daemon image, vendored unchanged from approval-md-hosted |
 | `demo/` | Compose stack, fake Telegram, scripted agent, demo policy, `smoke.sh` |
 | `Dockerfile` | The judge image for Maritime's GitHub source route (kept in step with `service/Dockerfile` by a test) |

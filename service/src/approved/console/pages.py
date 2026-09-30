@@ -254,7 +254,7 @@ policy builder.</p></div>
     <label for="approver">Human approver id</label>
     <input id="approver" value="carter" spellcheck="false">
     <label for="sender">Telegram numeric sender id</label>
-    <input id="sender" placeholder="7345216485" spellcheck="false">
+    <input id="sender" placeholder="123456789" spellcheck="false">
     <label for="defaultAutonomy">Default autonomy, for any class not named below</label>
     <select id="defaultAutonomy">
       <option value="manual" selected>manual</option>
