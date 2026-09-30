@@ -16,6 +16,9 @@
  *   registered URL is a public placeholder, so delivery goes to FORWARD_WEBHOOK_URL, the
  *   daemon's address on the compose network.
  * - GET /api/chat: the same thread as JSON, for demo/smoke.sh to assert on.
+ * - The page fetches `api/chat` and `api/tap` by RELATIVE URL, so it also works when served
+ *   under a path prefix (the try-it image serves it at `/approver/` behind a proxy that strips
+ *   `/a/<agent-id>`; see images/tryit/).
  *
  * It never prints or reports a bot token (it is in the request path) or the webhook secret.
  */
@@ -148,7 +151,8 @@ function render(html, into){
 let shown = "";
 async function refresh(){
   let data;
-  try { data = await (await fetch("/api/chat")).json(); } catch { return; }
+  try { data = await (await fetch("api/chat")).json(); } catch { return; }
+  if (!data || !Array.isArray(data.messages)) return;  // an error answer: keep the last view
   const key = JSON.stringify(data.messages);
   if (key === shown) return;
   shown = key;
@@ -171,7 +175,8 @@ async function refresh(){
         if (/^r:|reject|deny/i.test(b.data + " " + b.text)) btn.className = "no";
         btn.onclick = async () => {
           for (const x of row.querySelectorAll("button")) x.disabled = true;
-          await fetch("/api/tap", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({message_id: m.message_id, data: b.data})});
+          const r = await fetch("api/tap", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({message_id: m.message_id, data: b.data})}).catch(() => null);
+          if (!r || !r.ok) shown = "";  // refused or failed: redraw, which re-enables the buttons
           setTimeout(refresh, 500);
         };
         row.appendChild(btn);
