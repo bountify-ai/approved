@@ -1,6 +1,14 @@
-# Root build context (the Maritime judge image): the service package only.
+# Build context for images/tryit/Dockerfile (the repository root): only what the image runs.
+# BuildKit reads this file instead of the root .dockerignore when building this Dockerfile;
+# the tryit deploy branch carries it as its root .dockerignore (docs/tryit.md).
 *
 !service/pyproject.toml
 !service/uv.lock
 !service/src/
+!images/daemon/entrypoint.mjs
+!images/tryit/loopback.mjs
+!demo/fake-telegram/server.mjs
+!demo/agent/agent.py
+!demo/init.sh
+!demo/policy/APPROVAL.md
 **/__pycache__
