@@ -15,7 +15,7 @@ def test_offline_minimum(tmp_path: Path) -> None:
     s = load_settings({**BASE, "OFFLINE": "1"})
     assert s.offline is True
     assert s.facade_url == "https://facade.test/a/t"
-    assert s.judge_timeout_s == 25
+    assert s.judge_timeout_s == 60
     assert s.inference_base_url == "https://api.inference.wandb.ai/v1"
     assert s.weave_project == "bountify/judgy"
     assert s.telegram_enabled is False

@@ -23,7 +23,7 @@ to a delay, a retry in the approver's path, or a placeholder.
 
 | failure | behaviour | proved by |
 |---|---|---|
-| Reviewer slower than `JUDGE_TIMEOUT_S` (25 s) | abandoned; no message; `judge.absent.timeout` | `test_timeout_is_absence_and_does_not_raise` |
+| Reviewer slower than `JUDGE_TIMEOUT_S` (60 s) | abandoned; no message; `judge.absent.timeout` | `test_timeout_is_absence_and_does_not_raise` |
 | Unparseable model reply | no message; `judge.absent.parse` | `test_reviewer_failures_become_absence` |
 | Inference error (transport, HTTP, empty or truncated reply after one re-ask) | no message; `judge.absent.inference` | `test_live_reviewer_second_truncation_is_an_inference_error` |
 | Repeated failures | circuit breaker opens after 3 consecutive failures, skips the reviewer for 60 s, then admits one trial call | `test_breaker_half_opens_after_cooldown_and_recovers`, `test_half_open_failure_reopens_immediately` |

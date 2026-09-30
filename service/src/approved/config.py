@@ -84,7 +84,9 @@ class InferenceSettings(BaseModel):
     reviewer_model: str | None = None
 
     offline: bool = False
-    judge_timeout_s: PositiveFloat = 25.0
+    # 60 s: a reasoning model on W&B Inference outlived 25 s on the first live call, which
+    # also initialises Weave. The judge is advisory, so a slow verdict delays nothing.
+    judge_timeout_s: PositiveFloat = 60.0
 
     @property
     def weave_project(self) -> str:

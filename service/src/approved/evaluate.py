@@ -250,7 +250,7 @@ def _score_row(scenario: Scenario, output: Prediction) -> dict[str, Any]:
 
 
 def run_offline(
-    scenarios: Sequence[Scenario], reviewer: Any, *, dataset_version: str, timeout_s: float = 25.0
+    scenarios: Sequence[Scenario], reviewer: Any, *, dataset_version: str, timeout_s: float = 60.0
 ) -> EvalReport:
     """Evaluate without Weave: deterministic for a deterministic reviewer."""
     judge = eval_judge(reviewer, timeout_s, len(scenarios))
