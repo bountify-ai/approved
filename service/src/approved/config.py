@@ -76,6 +76,9 @@ MAX_FEEDBACK_TIMEOUT_S = 120.0
 _INFERENCE_OPTIONAL = {
     "inference_base_url": "INFERENCE_BASE_URL",
     "judge_timeout_s": "JUDGE_TIMEOUT_S",
+    "inference_call_budget_file": "INFERENCE_CALL_BUDGET_FILE",
+    "inference_call_budget_limit": "INFERENCE_CALL_BUDGET_LIMIT",
+    "inference_call_budget_hourly_limit": "INFERENCE_CALL_BUDGET_HOURLY_LIMIT",
 }
 _WORKER_OPTIONAL = {
     "tg_api_base": "TG_API_BASE",
@@ -116,6 +119,9 @@ class InferenceSettings(BaseModel):
     # 60 s: a reasoning model on W&B Inference outlived 25 s on the first live call. The
     # judge is advisory, so a slow verdict delays no approval (it does hold the follow).
     judge_timeout_s: Annotated[float, Field(gt=0, le=MAX_JUDGE_TIMEOUT_S)] = 60.0
+    inference_call_budget_file: Path | None = None
+    inference_call_budget_limit: Annotated[int, Field(gt=0)] | None = None
+    inference_call_budget_hourly_limit: Annotated[int, Field(gt=0)] | None = None
 
     @property
     def weave_project(self) -> str:
@@ -254,6 +260,18 @@ def _facade_url_allowed(url: str, *, demo: bool, allow_insecure: bool) -> bool:
 
 
 def _inference_fields(environ: Mapping[str, str], *, offline: bool) -> dict[str, object]:
+    budget_names = (
+        "INFERENCE_CALL_BUDGET_FILE",
+        "INFERENCE_CALL_BUDGET_LIMIT",
+        "INFERENCE_CALL_BUDGET_HOURLY_LIMIT",
+    )
+    if any(name in environ for name in budget_names) and not all(
+        _clean(environ.get(name)) for name in budget_names
+    ):
+        raise ConfigError(
+            "INFERENCE_CALL_BUDGET_FILE, INFERENCE_CALL_BUDGET_LIMIT and "
+            "INFERENCE_CALL_BUDGET_HOURLY_LIMIT must be set together"
+        )
     wandb_entity = _clean(environ.get("WANDB_ENTITY")) or DEFAULT_WANDB_ENTITY
     wandb_project = _clean(environ.get("WANDB_PROJECT")) or DEFAULT_WANDB_PROJECT
     if "/" in wandb_project:  # accept the combined "entity/project" spelling
@@ -282,6 +300,19 @@ def _inference_fields(environ: Mapping[str, str], *, offline: bool) -> dict[str,
         "offline": offline,
     }
     _optional(environ, raw, _INFERENCE_OPTIONAL)
+    if "inference_call_budget_limit" in raw and "inference_call_budget_hourly_limit" in raw:
+        try:
+            hourly = int(str(raw["inference_call_budget_hourly_limit"]))
+            lifetime = int(str(raw["inference_call_budget_limit"]))
+        except ValueError as exc:
+            raise ConfigError(
+                "INFERENCE_CALL_BUDGET_LIMIT and INFERENCE_CALL_BUDGET_HOURLY_LIMIT "
+                "must be integers"
+            ) from exc
+        if hourly > lifetime:
+            raise ConfigError(
+                "INFERENCE_CALL_BUDGET_HOURLY_LIMIT exceeds INFERENCE_CALL_BUDGET_LIMIT"
+            )
     return raw
 
 

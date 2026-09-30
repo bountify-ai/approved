@@ -33,6 +33,7 @@ from .bounded import run_bounded
 from .config import InferenceSettings
 from .logs import METRICS, log
 from .reviewer import (
+    InferenceBudgetExhausted,
     InferenceError,
     JudgeRequest,
     Reviewer,
@@ -54,7 +55,7 @@ __all__ = [
     "init_weave",
 ]
 
-AbsentReason = Literal["timeout", "parse", "inference", "circuit-open", "error"]
+AbsentReason = Literal["timeout", "parse", "inference", "budget-exhausted", "circuit-open", "error"]
 
 # Weave ships its own Sentry error reporting, which would send exception context (and with it
 # fragments of tenant requests) to a third party. Off unless an operator opts in explicitly.
@@ -294,13 +295,16 @@ class Judge:
             return self._absent(request, "timeout", latency)
         error = run.error
         if error is not None or run.value is None:
-            self.breaker.record_failure()
-            if isinstance(error, ReviewerParseError):
-                reason: AbsentReason = "parse"
-            elif isinstance(error, InferenceError | ReviewerError):
-                reason = "inference"
+            if isinstance(error, InferenceBudgetExhausted):
+                reason: AbsentReason = "budget-exhausted"
             else:
-                reason = "error"
+                self.breaker.record_failure()
+                if isinstance(error, ReviewerParseError):
+                    reason = "parse"
+                elif isinstance(error, InferenceError | ReviewerError):
+                    reason = "inference"
+                else:
+                    reason = "error"
             err_name = type(error).__name__ if error is not None else None
             return self._absent(request, reason, latency, error=err_name)
 

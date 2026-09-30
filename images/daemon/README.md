@@ -7,7 +7,7 @@ at commit `3d06a86eec04758645221db9c01183067cc6b00a`:
 | here | source | change |
 |---|---|---|
 | `Dockerfile` | root `Dockerfile` | provenance header added; `COPY image/entrypoint.mjs` became `COPY entrypoint.mjs` because this build context is `images/daemon/` |
-| `entrypoint.mjs` | `image/entrypoint.mjs` | none: byte-identical (sha256 `1cb433341f000fbc14e12601a860d631c38a5c05980ec9871d16e60a88745c79`) |
+| `entrypoint.mjs` | `image/entrypoint.mjs` | Adds optional `APPROVAL_WEBHOOK_INTERNAL_PORT` for two isolated try-it runtimes; default behavior remains unchanged (sha256 `af491bbe16f15bfbe6363de64cb9bbe5e8c649d343cbacdc0deb96484eb81a03`) |
 | `.dockerignore` | root `.dockerignore` | the same rule (context is the entrypoint only), re-pathed |
 | this README | `image/README.md` | the sections below, excerpted unchanged; links re-pointed or removed |
 
@@ -16,7 +16,7 @@ The runtime inside is approval.md core, pinned by commit in the Dockerfile
 this copy, re-copy both files from a newer approval-md-hosted commit and update the commit
 and hash above.
 
-The Approved demo runs this image unchanged in Telegram webhook mode, against the fake Bot
+The Approved demo runs this image in Telegram webhook mode, against the fake Bot
 API in `demo/fake-telegram/` (through the image's `APPROVAL_IMAGE_TG_API_BASE` seam). See
 `demo/README.md`.
 
@@ -254,4 +254,3 @@ unreachable the proxy answers 503 with `exit_code: 2`, an empty `stdout` and
 second implementation of the gate's vocabulary would be a second gate. A hook
 client must therefore treat any non-200 as a refusal, which is the same rule the
 harness adapters already follow for a hook that fails.
-

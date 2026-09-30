@@ -26,6 +26,7 @@ from .config import ConfigError, InferenceSettings, Settings, load_inference_set
 from .evaluate import load_dataset, run_offline, run_weave, scenarios_from_state
 from .feedback import FeedbackSender, WeaveFeedbackClient
 from .follow import FacadeClient
+from .inference_budget import InferenceCallBudget
 from .judge import CircuitBreaker, Judge, init_weave
 from .logs import log
 from .notify import Notifier, NullNotifier, TelegramNotifier
@@ -44,12 +45,22 @@ def build_reviewer(settings: InferenceSettings) -> Reviewer:
     # load_settings guarantees both in live mode.
     assert settings.reviewer_model is not None
     assert settings.inference_api_key is not None
+    call_budget = None
+    if settings.inference_call_budget_file is not None:
+        assert settings.inference_call_budget_limit is not None
+        assert settings.inference_call_budget_hourly_limit is not None
+        call_budget = InferenceCallBudget(
+            settings.inference_call_budget_file,
+            settings.inference_call_budget_limit,
+            hourly_limit=settings.inference_call_budget_hourly_limit,
+        )
     return LiveReviewer(
         model=settings.reviewer_model,
         base_url=settings.inference_base_url,
         api_key=settings.inference_api_key.get_secret_value(),
         timeout_s=settings.judge_timeout_s,
         wandb_project=settings.weave_project,
+        call_budget=call_budget,
     )
 
 

@@ -1,0 +1,7 @@
+# Get Approved gateway
+
+Deploy this directory as its own Vercel project on a unique origin. Set server-only `APPROVED_BACKEND_ORIGIN` to the HTTPS base URL of the private runtime, including a fixed Maritime `/a/<id>/` prefix when applicable, and `APPROVED_GATEWAY_KEY` to the runtime's gateway credential. Neither belongs in the static site or any `NEXT_PUBLIC_*` variable. Publish the gateway URL in the `gateway` constant in `site/index.html` after the deployment is ready.
+
+The eight fixed functions accept only the demo's page, health, session, state, run, reset, chat and tap routes. The page is a checked-in shell generated from `service/src/approved/tryit/page.py` with `python3 gateway/scripts/build-page.py`; `--check` verifies parity. It renders without contacting the sleeping backend. The page retries only the read-only `/health` warmup for up to 90 seconds, then attempts session allocation once. They reject other methods and queries; root accepts only `?auto=1`. The gateway forwards only JSON content type, its server credential and a per-tab `X-Approved-Session` token. The token stays in browser `sessionStorage` on the gateway origin. No cookies, redirects, upstream response headers, or raw backend errors pass through.
+
+Run `node --test gateway/test/*.test.cjs` from the repository root to check its request boundaries, shell parity and cold-start behavior. The 60-second Vercel function maximum gives the 15-second upstream timeout room to return a controlled response.

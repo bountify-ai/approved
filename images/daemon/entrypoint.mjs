@@ -310,7 +310,19 @@ function readWebhookMode(externalPort, serveInternalPort) {
   }
   const basePath = base.pathname.replace(/\/+$/u, "");
   base.pathname = `${basePath}${WEBHOOK_FRONT_PATH}`;
-  const port = WEBHOOK_INTERNAL_PORTS.find((candidate) => candidate !== externalPort && candidate !== serveInternalPort);
+  const configured = (process.env["APPROVAL_WEBHOOK_INTERNAL_PORT"] ?? "").trim();
+  let port;
+  if (configured !== "") {
+    if (!/^\d+$/u.test(configured) || Number(configured) < 1 || Number(configured) > 65535) {
+      fatal("APPROVAL_WEBHOOK_INTERNAL_PORT is not a valid TCP port");
+    }
+    port = Number(configured);
+    if (port === externalPort || port === serveInternalPort) {
+      fatal("APPROVAL_WEBHOOK_INTERNAL_PORT collides with the daemon or facade listener");
+    }
+  } else {
+    port = WEBHOOK_INTERNAL_PORTS.find((candidate) => candidate !== externalPort && candidate !== serveInternalPort);
+  }
   return { url: base.href, upstreamPath: base.pathname, port };
 }
 

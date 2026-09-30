@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {"api/*.mjs": {"maxDuration": 60, "includeFiles": "page.html"}},
+  "rewrites": [
+    {"source": "/", "destination": "/api/page"},
+    {"source": "/health", "destination": "/api/health"},
+    {"source": "/approver/api/chat", "destination": "/api/chat"},
+    {"source": "/approver/api/tap", "destination": "/api/tap"}
+  ]
+}

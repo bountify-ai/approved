@@ -32,7 +32,7 @@
       header.top img { height: 30px; width: auto; }
       header.top nav { display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 14px; }
       header.top nav a { color: var(--ink); text-decoration: none; border-bottom: 2px solid var(--brand); }
-      .hero { padding: 36px 0 28px; }
+      .hero { padding: 20px 0 18px; }
       .hero h1 {
         font-family: var(--font-display);
         font-weight: 400;
@@ -46,6 +46,19 @@
       .hero h1 em { font-style: normal; color: var(--accent-ink); }
       .hero p.lead { font-size: clamp(18px, 2.4vw, 22px); max-width: 62ch; margin: 0 0 24px; color: var(--ink-2); }
       .cta { display: flex; flex-wrap: wrap; gap: 14px; }
+      .get-approved { padding: 0 0 28px; }
+      .get-approved-panel { border: 3px solid var(--edge); border-radius: var(--radius); box-shadow: 7px 7px 0 var(--edge); background: var(--surface); padding: clamp(18px, 4vw, 34px); }
+      .get-approved-panel h2 { font-size: clamp(34px, 6vw, 62px); margin: 0; }
+      .get-approved-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+      .get-approved-panel p { max-width: 66ch; color: var(--ink-2); margin: 0 0 18px; }
+      .get-approved-panel .fine { font-size: 14px; margin-top: 17px; }
+      .get-approved-panel .btn { font: inherit; font-weight: 700; cursor: pointer; }
+      .demo-embed { margin-top: 22px; border-top: 2px solid var(--line); padding-top: 22px; }
+      .demo-embed[hidden] { display: none; }
+      .demo-embed .open-tab { display: inline-block; margin-bottom: 12px; }
+      .demo-embed iframe { display: block; width: 100%; height: min(82vh, 1000px); min-height: 680px; border: 2px solid var(--edge); border-radius: 16px; background: var(--surface); }
+      @media (max-width: 600px) { .demo-embed iframe { height: 850px; } }
+      :focus-visible { outline: 3px solid var(--gold); outline-offset: 4px; }
       .btn {
         display: inline-block;
         padding: 12px 20px;
@@ -137,6 +150,7 @@
       <header class="top">
         <img src="assets/wordmark.svg" alt="approval.md" />
         <nav>
+          <a href="#get-approved">Get Approved</a>
           <a href="slides.html">Deck</a>
           <a href="https://approval.md/hosted/policy-builder/">Policy builder</a>
           <a href="https://wandb.ai/bountify/judgy">W&amp;B</a>
@@ -147,15 +161,21 @@
       <main>
         <section class="hero">
           <h1>The agent asks.<br />A human <em>approves</em>.<br />A judge advises.</h1>
-          <p class="lead">
-            Approved is hosted <a href="https://approval.md/">approval.md</a>. An agent's risky tool call (a
-            <code>git push</code>, a payment, a delete) becomes a request in a hash-chained log and waits for a
-            person's tap on Telegram. A reviewer model on W&amp;B Inference posts an advisory beside the prompt,
-            and every human decision is attached to the judge's call as Weave feedback, so the judge is
-            measured against people.
-          </p>
+          <p class="lead">Approved puts a real approval.md gate between an agent and a risky action. A person decides; an AI judge advises. Every decision is recorded and measured.</p>
+        </section>
+
+        <section class="get-approved" id="get-approved" aria-labelledby="get-approved-title">
+          <div class="get-approved-panel">
+            <div class="get-approved-head"><h2 id="get-approved-title">Try the full approval loop</h2><button class="btn primary" id="get-approved-button" type="button" aria-expanded="false" aria-controls="demo-embed">Get Approved</button></div>
+            <p>Run a scripted agent through the real approval.md gate. A live AI judge gives advice; you decide each held action here and see what the gate actually did. The chat in this demo emulates Telegram transport, so there is no account or bot setup.</p>
+            <p class="fine">A private browser session starts when you open it. Prompts may take up to 30 seconds to arrive.</p>
+            <div class="demo-embed" id="demo-embed" hidden><a class="open-tab" id="demo-new-tab" href="https://approved-demo-gateway.vercel.app/?auto=1" target="_blank" rel="noopener noreferrer">Open demo in a new tab</a><iframe id="demo-frame" title="Get Approved live private demo" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe></div>
+          </div>
+        </section>
+
+        <section aria-label="More ways to explore">
           <div class="cta">
-            <a class="btn primary" href="slides.html">Open the deck</a>
+            <a class="btn" href="slides.html">Open the deck</a>
             <a class="btn gold" href="https://approval.md/hosted/policy-builder/">Build a policy</a>
             <a class="btn" href="https://github.com/bountify-ai/approved">Read the code</a>
           </div>
@@ -236,7 +256,7 @@
           <div class="stats">
             <div class="stat"><b>1.0</b><span>agreement with the human on the calls the judge made (12-scenario Weave evaluation)</span></div>
             <div class="stat"><b>0 / 7</b><span>READY verdicts on actions a human rejected</span></div>
-            <div class="stat"><b>366</b><span>tests, all with network sockets disabled</span></div>
+            <div class="stat"><b>CI</b><span>automated checks, including tests with network sockets disabled</span></div>
             <div class="stat"><b>0</b><span>writes the judge can make: it reads the log and posts from its own bot</span></div>
           </div>
           <p style="margin-top: 14px; color: var(--ink-2); font-size: 15px">
@@ -271,7 +291,7 @@
           <h2 id="run">Run it</h2>
           <pre>git clone https://github.com/bountify-ai/approved &amp;&amp; cd approved
 make setup   # uv sync
-make test    # 366 tests, sockets disabled
+make test    # run the automated tests with sockets disabled
 make demo    # the whole flow in Docker, offline; tap Approve or Reject at http://127.0.0.1:8090/</pre>
         </section>
       </main>
@@ -281,5 +301,30 @@ make demo    # the whole flow in Docker, offline; tap Approve or Reject at http:
         an advisory AI and never an approval. Hackathon entry: CoreWeave × W&amp;B Fully Connected, part 2.
       </footer>
     </div>
+    <script>
+      (() => {
+        const gateway = 'https://approved-demo-gateway.vercel.app/';
+        const button = document.getElementById('get-approved-button');
+        const embed = document.getElementById('demo-embed');
+        const frame = document.getElementById('demo-frame');
+        const newTab = document.getElementById('demo-new-tab');
+        newTab.href = new URL('?auto=1', gateway).href;
+        button.addEventListener('click', () => {
+          if (embed.hidden) {
+            frame.src = new URL('?auto=1', gateway).href;
+            embed.hidden = false;
+            button.setAttribute('aria-expanded', 'true');
+            button.textContent = 'Close demo';
+            frame.focus();
+          } else {
+            embed.hidden = true;
+            frame.removeAttribute('src');
+            button.setAttribute('aria-expanded', 'false');
+            button.textContent = 'Get Approved';
+            button.focus();
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
