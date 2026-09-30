@@ -111,6 +111,7 @@ test('readiness deadline before any POST leaves manual retry available',async()=
   const h=runHarness({ready:[false],clockStep:30000});await h.ctx.__pageTest.begin();
   assert.equal(h.calls.filter(([route])=>route==='/api/run').length,0);
   assert.equal(h.elements.get('retry-run').hidden,false);
+  assert.equal(h.elements.get('session-state').textContent,'Preparing approval gate');
   assert.match(h.elements.get('notice').textContent,/90 seconds/);
 });
 test('deadline after only confirmed pre-execution refusals leaves manual retry available',async()=>{

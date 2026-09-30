@@ -221,6 +221,55 @@ def main() -> int:
             "exec", NAME, "sh", "-c", "find /data/tryit/sessions -name events.jsonl -type f | wc -l"
         )
         check(int(output.strip()) == 2, "two disjoint persistent approval logs")
+        # A machine restart reuses the same fake Bot API port and bot id for a new
+        # visitor while preserving the old session's store. Core's bot registry
+        # must live under the session, or the next webhook refuses this slot.
+        docker("restart", NAME)
+        check(bool(wait_for(lambda: request("GET", "/health")[0] == 200, 45)), "front restarted")
+        status3, third, _ = request("POST", "/api/session")
+        check(status3 == 202, "new session reuses a slot after restart")
+        token3 = third.get("session_token", "")
+        reused = wait_for(
+            lambda: (
+                (s := state(token3)).get("session", {}).get("state") == "ready"
+                and s.get("health", {}).get("ok")
+                and s
+            ),
+            180,
+        )
+        check(bool(reused), "reused slot starts a healthy real gate and approver webhook")
+        if reused:
+            check(request("POST", "/api/run", token3)[0] == 202, "reused slot starts a real run")
+            fresh_run = wait_for(lambda: state(token3).get("run"), 15)
+            check(bool(fresh_run), "reused slot run appears")
+            if fresh_run:
+                held = wait_for(lambda: prompt(token3, fresh_run["id"], "push-main"), 120)
+                check(held is not None, "reused slot receives a real approval prompt")
+                if held is not None:
+                    message_id, buttons = held
+                    check(
+                        request(
+                            "POST",
+                            "/approver/api/tap",
+                            token3,
+                            {"message_id": message_id, "data": buttons["r"]},
+                        )[0]
+                        == 200,
+                        "reused slot delivers the human rejection",
+                    )
+                    decided = wait_for(
+                        lambda: next(
+                            (
+                                item
+                                for item in state(token3).get("run", {}).get("scenarios", [])
+                                if item.get("name") == "push-main"
+                                and item.get("status") == "rejected"
+                            ),
+                            None,
+                        ),
+                        30,
+                    )
+                    check(bool(decided), "reused slot records the real gate decision")
     except Exception as exc:  # noqa: BLE001
         check(False, f"smoke error: {type(exc).__name__}: {exc}")
     finally:

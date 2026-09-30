@@ -297,6 +297,7 @@ class LogVerifier:
             "NODE_ENV": "production",
             "APPROVAL_CLI": APPROVAL_CLI,
             "APPROVAL_DATA_DIR": str(self._layout.data),
+            "APPROVAL_STATE_DIR": str(self._layout.tryit / "runtime-state"),
         }
         proc = self._reaper.spawn(
             [NODE, APPROVAL_CLI, "log", "verify", "--json"],
@@ -400,6 +401,7 @@ class Supervisor:
             "NODE_ENV": "production",
             "APPROVAL_CLI": APPROVAL_CLI,
             "APPROVAL_DATA_DIR": str(self.layout.data),
+            "APPROVAL_STATE_DIR": str(self.layout.tryit / "runtime-state"),
         }
         backoff = 2.0
         while not stop.is_set():
@@ -434,13 +436,19 @@ class Supervisor:
         self.fake_tg_generation += 1
         self.fake_tg.start()
         if not self._await("fake_telegram", stop, 30):
-            log("tryit.boot.slow", level="warning", part="fake_telegram")
+            if not stop.is_set():
+                self.boot_error = "fake-telegram-unavailable"
+                log("tryit.boot.failed", level="error", part="fake_telegram")
+            return
         if stop.is_set():
             self.shutdown()
             return
         self.daemon.start()
         if not self._await("daemon", stop, 90):
-            log("tryit.boot.slow", level="warning", part="daemon")
+            if not stop.is_set():
+                self.boot_error = "daemon-unavailable"
+                log("tryit.boot.failed", level="error", part="daemon")
+            return
         if stop.is_set():
             self.shutdown()
             return
