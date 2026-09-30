@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Approved · hosted approval.md with a judge in the loop</title>
+    <meta
+      name="description"
+      content="Approved: an agent's risky action waits for a human's tap on Telegram, with an advisory AI judge scored against people in W&B Weave."
+    />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Anton&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap"
+    />
+    <link rel="stylesheet" href="assets/brand.css" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-sans);
+        font-size: 18px;
+        line-height: 1.5;
+      }
+      a { color: var(--accent-ink); }
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+      header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 0; }
+      header.top img { height: 30px; width: auto; }
+      header.top nav { display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 14px; }
+      header.top nav a { color: var(--ink); text-decoration: none; border-bottom: 2px solid var(--brand); }
+      .hero { padding: 36px 0 28px; }
+      .hero h1 {
+        font-family: var(--font-display);
+        font-weight: 400;
+        font-size: clamp(44px, 9vw, 96px);
+        line-height: 0.98;
+        letter-spacing: 0.01em;
+        text-transform: uppercase;
+        margin: 0 0 18px;
+        text-wrap: balance;
+      }
+      .hero h1 em { font-style: normal; color: var(--accent-ink); }
+      .hero p.lead { font-size: clamp(18px, 2.4vw, 22px); max-width: 62ch; margin: 0 0 24px; color: var(--ink-2); }
+      .cta { display: flex; flex-wrap: wrap; gap: 14px; }
+      .btn {
+        display: inline-block;
+        padding: 12px 20px;
+        border: 3px solid var(--edge);
+        border-radius: 14px;
+        box-shadow: 5px 5px 0 var(--edge);
+        font-weight: 700;
+        text-decoration: none;
+        color: var(--ink);
+        background: var(--surface);
+        transition: transform 0.06s, box-shadow 0.06s;
+      }
+      .btn:hover { transform: translate(2px, 2px); box-shadow: 3px 3px 0 var(--edge); }
+      .btn:active { transform: translate(5px, 5px); box-shadow: 0 0 0 var(--edge); }
+      .btn.primary { background: var(--accent); color: var(--on-accent); }
+      .btn.gold { background: var(--gold); color: var(--on-gold); }
+      section { padding: 28px 0; }
+      h2 {
+        font-family: var(--font-display);
+        font-weight: 400;
+        text-transform: uppercase;
+        font-size: clamp(28px, 4.4vw, 44px);
+        line-height: 1.05;
+        margin: 0 0 16px;
+      }
+      .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: var(--surface);
+        border: 3px solid var(--edge);
+        border-radius: var(--radius);
+        box-shadow: 6px 6px 0 var(--edge);
+        padding: 20px;
+        color: var(--ink);
+        text-decoration: none;
+      }
+      a.card:hover { transform: translate(2px, 2px); box-shadow: 4px 4px 0 var(--edge); }
+      .card h3 { margin: 0; font-size: 21px; line-height: 1.2; }
+      .card p { margin: 0; color: var(--ink-2); font-size: 16px; }
+      .card .go { margin-top: auto; padding-top: 8px; font-family: var(--font-mono); font-size: 13px; color: var(--accent-ink); overflow-wrap: anywhere; }
+      .chip {
+        align-self: flex-start;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 3px 9px;
+        border: 2px solid var(--edge);
+        border-radius: 999px;
+        background: var(--accent-soft);
+      }
+      .chip.gold { background: var(--gold-soft); }
+      .chip.amber { background: var(--alarm-soft); }
+      .stats { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+      .stat { background: var(--band); color: var(--on-band); border-radius: var(--radius); padding: 20px; }
+      .stat b { display: block; font-family: var(--font-display); font-weight: 400; font-size: 52px; line-height: 1; font-variant-numeric: tabular-nums; }
+      .stat span { font-size: 15px; opacity: 0.85; }
+      .diagram { background: var(--surface); border: 3px solid var(--edge); border-radius: var(--radius); box-shadow: 6px 6px 0 var(--edge); padding: 16px; overflow-x: auto; }
+      .diagram img { display: block; width: 100%; min-width: 640px; height: auto; }
+      ol.steps { margin: 0; padding-left: 22px; max-width: 70ch; }
+      ol.steps li { margin-bottom: 8px; }
+      pre {
+        background: var(--band);
+        color: var(--on-band);
+        border-radius: 14px;
+        padding: 16px;
+        overflow-x: auto;
+        font-family: var(--font-mono);
+        font-size: 14px;
+        line-height: 1.6;
+        margin: 0;
+      }
+      .status { font-family: var(--font-mono); font-size: 14px; }
+      .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+      .dot.ok { background: var(--brand); }
+      footer { padding: 32px 0 48px; color: var(--muted); font-size: 14px; border-top: 2px solid var(--line); margin-top: 24px; }
+      @media (prefers-reduced-motion: reduce) { .btn, a.card { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <img src="assets/wordmark.svg" alt="approval.md" />
+        <nav>
+          <a href="slides.html">Deck</a>
+          <a href="https://approval.md/hosted/policy-builder/">Policy builder</a>
+          <a href="https://wandb.ai/bountify/judgy">W&amp;B</a>
+          <a href="https://github.com/bountify-ai/approved">GitHub</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero">
+          <h1>The agent asks.<br />A human <em>approves</em>.<br />A judge advises.</h1>
+          <p class="lead">
+            Approved is hosted <a href="https://approval.md/">approval.md</a>. An agent's risky tool call (a
+            <code>git push</code>, a payment, a delete) becomes a request in a hash-chained log and waits for a
+            person's tap on Telegram. A reviewer model on W&amp;B Inference posts an advisory beside the prompt,
+            and every human decision is attached to the judge's call as Weave feedback, so the judge is
+            measured against people.
+          </p>
+          <div class="cta">
+            <a class="btn primary" href="slides.html">Open the deck</a>
+            <a class="btn gold" href="https://approval.md/hosted/policy-builder/">Build a policy</a>
+            <a class="btn" href="https://github.com/bountify-ai/approved">Read the code</a>
+          </div>
+        </section>
+
+        <section aria-labelledby="see">
+          <h2 id="see">See it</h2>
+          <div class="grid">
+            <a class="card" href="slides.html">
+              <span class="chip">14 slides</span>
+              <h3>The demo deck</h3>
+              <p>The pitch, the architecture and the gate, judge and human thread, in the browser.</p>
+              <span class="go">Open the deck →</span>
+            </a>
+            <a class="card" href="https://approval.md/hosted/policy-builder/">
+              <span class="chip gold">Try it</span>
+              <h3>Policy builder</h3>
+              <p>
+                Pick what your agent may do alone and what waits for you. It writes the
+                <code>APPROVAL.md</code> the gate enforces. Runs in your browser.
+              </p>
+              <span class="go">approval.md/hosted/policy-builder →</span>
+            </a>
+            <a class="card" href="https://wandb.ai/bountify/judgy">
+              <span class="chip">W&amp;B Weave</span>
+              <h3>Judge traces and evaluation</h3>
+              <p>Every verdict is a Weave trace. Human decisions are feedback on it. The evaluation scores agreement.</p>
+              <span class="go">wandb.ai/bountify/judgy →</span>
+            </a>
+            <a class="card" href="https://approval.md/judgy/research/">
+              <span class="chip">Research</span>
+              <h3>judgy</h3>
+              <p>The reviewer behind the judge: how it is prompted, measured and promoted, and what it gets wrong.</p>
+              <span class="go">approval.md/judgy/research →</span>
+            </a>
+            <a class="card" href="https://api.maritime.sh/a/a3fe6a46-daaa-40ea-86e7-bfc0e4a095c5/health">
+              <span class="chip">Live on Maritime</span>
+              <h3>The judge, deployed</h3>
+              <p>
+                One microVM following a real tenant's log with a read-only credential. Its health endpoint reports
+                the worker and whether the hash chain verified.
+              </p>
+              <span class="go">GET /health →</span>
+            </a>
+            <a class="card" href="https://github.com/bountify-ai/approved#quickstart">
+              <span class="chip amber">Local, offline</span>
+              <h3>Run the whole flow</h3>
+              <p><code>make demo</code> brings up the daemon, a fake Telegram, the judge and a scripted agent. No secrets.</p>
+              <span class="go">Quickstart →</span>
+            </a>
+          </div>
+        </section>
+
+        <section aria-labelledby="numbers">
+          <h2 id="numbers">Measured</h2>
+          <div class="stats">
+            <div class="stat"><b>1.0</b><span>agreement with the human on the calls the judge made (12-scenario Weave evaluation)</span></div>
+            <div class="stat"><b>0 / 7</b><span>READY verdicts on actions a human rejected</span></div>
+            <div class="stat"><b>366</b><span>tests, all with network sockets disabled</span></div>
+            <div class="stat"><b>0</b><span>writes the judge can make: it reads the log and posts from its own bot</span></div>
+          </div>
+          <p style="margin-top: 14px; color: var(--ink-2); font-size: 15px">
+            Evaluation run:
+            <a href="https://wandb.ai/bountify/judgy/r/call/01a0ec75-27fb-7622-be57-553771ca6387">Weave call 01a0ec75</a>.
+            The scenario set is synthetic and small; the numbers say the loop works, not that the judge is proven.
+          </p>
+        </section>
+
+        <section aria-labelledby="how">
+          <h2 id="how">How it works</h2>
+          <div class="diagram"><img src="assets/arch.svg" alt="Architecture: agent machine with a fail-closed hook, tenant daemon machine with the hash-chained log, Telegram approval bot, and the advisory judge reading the log and posting from its own bot, with traces and feedback in W&amp;B Weave" /></div>
+          <ol class="steps" style="margin-top: 18px">
+            <li>The agent's tool call hits a fail-closed hook. The gate classifies it against the tenant's <code>APPROVAL.md</code>.</li>
+            <li>A manual class opens a request in the append-only, hash-chained log. The approver gets a Telegram prompt.</li>
+            <li>The judge reads the request with a read-only credential and posts a labelled advisory from a separate bot. It cannot grant.</li>
+            <li>The human taps. The gate records the decision and the agent's retry adopts it.</li>
+            <li>The decision is attached to the judge's Weave call as feedback, and the evaluation scores agreement.</li>
+          </ol>
+        </section>
+
+        <section aria-labelledby="ready">
+          <h2 id="ready">Production readiness</h2>
+          <div class="grid">
+            <div class="card"><h3>Resilience</h3><p>The judge fails toward absence: no verdict is ever a grant. A chain break stops it. Follow errors back off and retry.</p><a class="go" href="https://github.com/bountify-ai/approved/blob/main/RESILIENCE.md">RESILIENCE.md →</a></div>
+            <div class="card"><h3>Security</h3><p>Separate bot, read-only credential, no agent credential on the judge, redaction toward W&amp;B. Known gaps are written down.</p><a class="go" href="https://github.com/bountify-ai/approved/blob/main/SECURITY.md">SECURITY.md →</a></div>
+            <div class="card"><h3>Reviewed adversarially</h3><p>An independent reviewer was given only the repo and its contracts and told to break it. Every finding was fixed with a test.</p><a class="go" href="https://github.com/bountify-ai/approved/blob/main/ARCHITECTURE.md">ARCHITECTURE.md →</a></div>
+          </div>
+        </section>
+
+        <section aria-labelledby="run">
+          <h2 id="run">Run it</h2>
+          <pre>git clone https://github.com/bountify-ai/approved &amp;&amp; cd approved
+make setup   # uv sync
+make test    # 366 tests, sockets disabled
+make demo    # the whole flow in Docker, offline; tap Approve or Reject at http://127.0.0.1:8090/</pre>
+        </section>
+      </main>
+
+      <footer>
+        Approved is built by Bountify on <a href="https://approval.md/">approval.md</a> (Apache 2.0 runtime). The judge is
+        an advisory AI and never an approval. Hackathon entry: CoreWeave × W&amp;B Fully Connected, part 2.
+      </footer>
+    </div>
+  </body>
+</html>
