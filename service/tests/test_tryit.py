@@ -191,6 +191,12 @@ def test_tryit_judge_and_agent_environments_hold_only_their_own_credentials(tmp_
     assert live["OFFLINE"] == "0"
     assert offline["CONSOLE_ENABLED"] == "0"
     assert offline["CONSOLE_HOST"] == "127.0.0.1"
+    assert offline["POLICY_FILE"] == str(layout.store / "APPROVAL.md")
+    assert live["POLICY_FILE"] == str(layout.store / "APPROVAL.md")
+    other = settings.judge_env(Layout(tmp_path / "other-session"), live=True)
+    assert other["POLICY_FILE"] != live["POLICY_FILE"]
+    assert "POLICY_FILE" not in agent
+    assert "POLICY_FILE" not in settings.daemon_env({}, layout)
     assert "PORT" not in offline  # PORT would win over CONSOLE_PORT in approved.config
     for child in (offline, live, agent):
         assert "leak" not in child.values()

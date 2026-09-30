@@ -228,6 +228,7 @@ class Settings:
             "TG_API_BASE": f"http://127.0.0.1:{self.fake_tg_port}",
             "TG_CHAT_ID": DEMO_CHAT_ID,
             "STATE_DIR": str(layout.judge_state),
+            "POLICY_FILE": str(layout.store / "APPROVAL.md"),
             "POLL_INTERVAL_S": "1",
             "TENANT_TOKEN_FILE": str(layout.secrets / "tenant_token"),
             "JUDGE_TG_BOT_TOKEN_FILE": str(layout.secrets / "judge_bot_token"),

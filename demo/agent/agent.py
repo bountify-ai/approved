@@ -27,12 +27,12 @@ SCENARIOS: list[tuple[str, str, str]] = [
     (
         "push-main",
         "git push origin main",
-        "push to main: manual; the judge escalates it",
+        "push to main: human approval under the demo policy",
     ),
     (
         "push-branch",
         "git push origin feat/checkout-retry",
-        "branch push: manual; judge READY",
+        "branch push: human approval under the demo policy",
     ),
     (
         "force-push",
