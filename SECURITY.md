@@ -168,3 +168,13 @@ and core runs an unattested policy manual-only, so the window fails safe.
 - **Channel-secret isolation on Maritime is unverified** (case 1): the experiment ran without
   a channel credential.
 - **Durability under `maritime stop`**: see [RESILIENCE.md](RESILIENCE.md).
+- **The console cannot sign in through Maritime's public URL.** Maritime's public proxy drops
+  the `Cookie` request header, as it drops `Authorization`, so the console's CSRF and session
+  cookies never reach it and every sign-in answers "Session expired" (seen 2026-09-29).
+  `/health` is unaffected. On Maritime the console is reachable only from inside the machine
+  (`maritime exec`). Put the console on its own domain, or set `CONSOLE_ENABLED=0`.
+- **The judge sleeps with its machine.** Maritime auto-sleeps a machine after 900 idle
+  seconds, and the judge's own outbound polling does not count as activity. A sleeping judge
+  sees no request, so advisories are absent until something wakes it (seen 2026-09-29). The
+  gate is unaffected: absence is the judge's failure mode. Keep the judge awake with the
+  always-on add-on or a platform cron trigger.

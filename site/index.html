@@ -121,6 +121,10 @@
         line-height: 1.6;
         margin: 0;
       }
+      .shots { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+      .shots figure { margin: 0; background: var(--surface); border: 3px solid var(--edge); border-radius: var(--radius); box-shadow: 6px 6px 0 var(--edge); padding: 12px; }
+      .shots img { display: block; width: 100%; height: auto; border-radius: 12px; }
+      .shots figcaption { font-size: 15px; color: var(--ink-2); padding: 10px 4px 2px; }
       .status { font-family: var(--font-mono); font-size: 14px; }
       .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
       .dot.ok { background: var(--brand); }
@@ -202,6 +206,28 @@
               <p><code>make demo</code> brings up the daemon, a fake Telegram, the judge and a scripted agent. No secrets.</p>
               <span class="go">Quickstart →</span>
             </a>
+          </div>
+        </section>
+
+        <section aria-labelledby="live">
+          <h2 id="live">It ran live</h2>
+          <p style="max-width: 70ch; margin: 0 0 18px; color: var(--ink-2)">
+            30 September 2026, 07:16 UTC. A Hermes agent on one Maritime machine tried
+            <code>git push origin main</code>. The gate on a second machine held it and asked the approver on
+            Telegram. The judge on a third machine read the request, answered in four seconds and posted its
+            advisory from its own bot. The human approved, and that decision went to Weave as feedback on the
+            judge's trace:
+            <a href="https://wandb.ai/bountify/judgy/r/call/01a0f12b-bee2-7124-8bfc-a90f3e670ffa">call 01a0f12b</a>.
+          </p>
+          <div class="shots">
+            <figure>
+              <img src="assets/live-judge.png" width="1156" height="272" alt="Telegram message from the judge bot: Judge (advisory AI, not an approval): NEEDS_HUMAN, pushing to the default branch is production-class and requires human review, with a W&amp;B trace link and the request class vcs.push.main" />
+              <figcaption>The judge's advisory, from its own bot. It has no buttons: it cannot grant.</figcaption>
+            </figure>
+            <figure>
+              <img src="assets/live-gate.png" width="1044" height="1600" loading="lazy" alt="Telegram thread from the approval bot: approval required for vcs.push.main, the computed class and command, the canonical payload rendering with its sha256, then approved by human:carter at 07:17 UTC, seq 52" />
+              <figcaption>The gate's prompt and the recorded decision: approved by <code>human:carter</code>, seq 52 in the hash-chained log.</figcaption>
+            </figure>
           </div>
         </section>
 
