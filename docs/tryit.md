@@ -28,6 +28,9 @@ visitor capability, ends its run, terminates only its own processes, and release
 after cleanup. The log and store remain on disk; a later session receives a new random id and
 never reads those files. `POST /api/reset` clears only the browser-visible run and chat floor.
 The core's fixed policy and agent scenarios cannot be changed by visitor input.
+The core's Telegram bot ownership registry is also rooted in each session's data directory;
+a later visitor can safely reuse a slot's fake Bot API port without inheriting the previous
+visitor's bot claim.
 
 `POST /api/run` starts one scripted run in that session. `GET /approver/api/chat` shows its
 private demo messages; `POST /approver/api/tap` delivers an Approve or Reject button only for a

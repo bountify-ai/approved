@@ -179,6 +179,9 @@ def test_daemon_environment_keeps_each_session_store_and_ports(tmp_path: Path) -
     assert env_one["APPROVAL_DATA_DIR"] == str(first_layout.data)
     assert env_two["APPROVAL_DATA_DIR"] == str(second_layout.data)
     assert env_one["APPROVAL_DATA_DIR"] != env_two["APPROVAL_DATA_DIR"]
+    assert env_one["APPROVAL_STATE_DIR"] == str(first_layout.tryit / "runtime-state")
+    assert env_two["APPROVAL_STATE_DIR"] == str(second_layout.tryit / "runtime-state")
+    assert env_one["APPROVAL_STATE_DIR"] != env_two["APPROVAL_STATE_DIR"]
     assert {
         env_one["PORT"],
         env_one["APPROVAL_SERVE_INTERNAL_PORT"],
@@ -190,3 +193,49 @@ def test_daemon_environment_keeps_each_session_store_and_ports(tmp_path: Path) -
             env_two["APPROVAL_WEBHOOK_INTERNAL_PORT"],
         }
     )
+
+
+def test_reusing_a_slot_keeps_bot_ownership_in_the_new_session(tmp_path: Path) -> None:
+    """A new visitor gets its own core registry even on the same fake Bot API port."""
+    from approved.tryit.config import Layout
+
+    slot = Settings(port=18789, daemon_port=18000, fake_tg_port=18001)
+    old = slot.daemon_env({}, Layout(tmp_path / "sessions" / "old"))
+    new = slot.daemon_env({}, Layout(tmp_path / "sessions" / "new"))
+    assert old["APPROVAL_IMAGE_TG_API_BASE"] == new["APPROVAL_IMAGE_TG_API_BASE"]
+    assert old["APPROVAL_STATE_DIR"] != new["APPROVAL_STATE_DIR"]
+    assert old["APPROVAL_STATE_DIR"].startswith(old["APPROVAL_DATA_DIR"] + "/")
+    assert new["APPROVAL_STATE_DIR"].startswith(new["APPROVAL_DATA_DIR"] + "/")
+
+
+def test_required_child_timeout_refuses_ready_state(tmp_path: Path, monkeypatch: Any) -> None:
+    """An absent approver transport must not appear as a ready private demo."""
+    from approved.tryit.config import Layout
+    from approved.tryit.supervisor import Supervisor
+
+    class Child:
+        def __init__(self) -> None:
+            self.starts = 0
+
+        def start(self) -> None:
+            self.starts += 1
+
+    monkeypatch.setattr("approved.tryit.supervisor.generate", lambda _path: object())
+    monkeypatch.setattr(Supervisor, "_init_store", lambda _self, _stop: True)
+    for missing in ("fake_telegram", "daemon"):
+        sup = Supervisor.__new__(Supervisor)
+        sup.layout = Layout(tmp_path / missing)
+        sup.layout.data.mkdir()
+        sup.booted = False
+        sup.boot_error = None
+        sup.fake_tg_generation = 0
+        sup.fake_tg = Child()  # type: ignore[assignment]
+        sup.daemon = Child()  # type: ignore[assignment]
+        sup.judge = Child()  # type: ignore[assignment]
+        monkeypatch.setattr(
+            sup, "_await", lambda part, _stop, _timeout, unavailable=missing: part != unavailable
+        )
+        sup.boot(threading.Event(), judge_live=True)
+        assert not sup.booted
+        assert sup.boot_error == f"{missing.replace('_', '-')}-unavailable"
+        assert sup.judge.starts == 0
