@@ -18,6 +18,15 @@ W&B project (Weave traces, human feedback and the evaluation): <https://wandb.ai
 
 Landing page: <https://approval.md/approved/>. The deck: <https://approval.md/approved/slides>.
 
+It ran live on 2026-09-30: a gated Hermes on Maritime tried `git push origin main`, the gate
+held it, the judge posted its advisory from its own bot, a human approved, and the decision
+went to Weave as feedback on the judge's trace
+([call 01a0f12b](https://wandb.ai/bountify/judgy/r/call/01a0f12b-bee2-7124-8bfc-a90f3e670ffa)).
+
+<img src="site/assets/live-judge.png" alt="The judge's advisory in Telegram: NEEDS_HUMAN, with a W&B trace link" width="640">
+
+The offline demo (`make demo`) shows the same flow with a fake Telegram:
+
 1. A scripted agent asks to run four commands. The read (`cat README.md`) runs at once.
 2. `git push origin main` is held. The approver's chat shows the gate's prompt with Approve and
    Reject buttons, and right beside it, from a separate judge bot: `🧑‍⚖️ Judge (advisory AI, not
