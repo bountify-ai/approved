@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Approved · demo deck</title>
+    <meta name="description" content="Hosted approval.md with an advisory AI judge. The Approved demo deck." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Approved · demo deck" />
+    <meta property="og:description" content="Hosted approval.md with an advisory AI judge. The Approved demo deck." />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <script>
+      // The deck is light unless the URL says ?theme=dark (projectors vary; the URL is explicit).
+      (function () {
+        var m = /[?&]theme=(dark|light)\b/.exec(location.search);
+        document.documentElement.setAttribute("data-theme", m ? m[1] : "light");
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" />
+    <link rel="stylesheet" href="assets/brand.css" />
+    <link rel="stylesheet" href="assets/slides.css" />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section data-markdown="copy/slides.md" data-separator="^---$" data-separator-notes="^Note:"></section>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.js" integrity="sha384-rZIIVPQD/+U9IL3I62KrBHuVtPgYv+xdXvER5RBiVQRszJEJfLKRrcrZwI7fhcHT" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/markdown/markdown.js" integrity="sha384-ee/QmFMUwC+YUuswSDzliKj27Anp3rSblE1ujBcPKyrzwG15Daa1GL6JcNbPg/oG" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/notes/notes.js" integrity="sha384-zaxVZlTGBPySa6IWC61g+1BgKaWp4jQ7Qcm/TrxRPMAziaAmE0ZbNGwRAGI2vmkk" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
+    <script src="assets/chat.js"></script>
+    <script src="assets/slides.js"></script>
+    <script>
+      Reveal.initialize({
+        width: 1280,
+        height: 720,
+        margin: 0.04,
+        center: false,
+        display: "grid",
+        hash: true,
+        controls: true,
+        progress: true,
+        slideNumber: "c/t",
+        transition: "none",
+        backgroundTransition: "none",
+        overview: false,
+        pdfSeparateFragments: false,
+        pdfMaxPagesPerSlide: 1,
+        plugins: [RevealMarkdown, ApprovedDeck, RevealNotes]
+      });
+    </script>
+  </body>
+</html>
