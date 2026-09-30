@@ -7,7 +7,7 @@
 # through the runtime's own verbs: nothing here writes a log record by hand.
 set -eu
 
-store=/data/demo
+store="${APPROVAL_DATA_DIR:-/data}/demo"
 cli="node ${APPROVAL_CLI}"
 
 if [ -f "$store/APPROVAL.md" ] && cmp -s /demo/APPROVAL.md "$store/APPROVAL.md"; then

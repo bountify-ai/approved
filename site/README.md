@@ -3,7 +3,7 @@
 The demo deck for the Approved pitch. What Approved is and how it works is in the
 [repo README](../README.md); this folder is only the slides.
 
-One static page, no build step. All wording lives in `copy/slides.md`; the HTML and JavaScript
+One static page, no build step. The landing page embeds the separately deployed Get Approved gateway from its `gateway` constant. All wording lives in `copy/slides.md`; the HTML and JavaScript
 only arrange it.
 
 | File | What it is |
@@ -156,3 +156,7 @@ nothing is sent anywhere). Anton and JetBrains Mono come from Google Fonts. Noth
 the site. reveal.css is deliberately not loaded; `assets/slides.css` carries the structural
 rules the deck uses. The deck engine is ported from the Slop Bot deck (slopbot.fyi) and
 re-skinned.
+
+## Get Approved embed
+
+The Get Approved block on `index.html` opens the separate Vercel gateway in an iframe with `?auto=1`. Confirm the assigned gateway production alias before publishing the static site, then set the `gateway` constant in `index.html`. The gateway deployment and its server-only environment are documented in [`../gateway/README.md`](../gateway/README.md). The browser chat emulates Telegram; the private runtime runs the real gate and live AI judge.

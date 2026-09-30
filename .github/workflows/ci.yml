@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Gateway route, credential, and response boundaries
+        run: node --test gateway/test/*.test.cjs
+
   service:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -77,3 +88,27 @@ jobs:
         env:
           SKIP_BUILD: "1"
         run: bash demo/smoke.sh
+
+  tryit-smoke:
+    # Two private sessions through the real daemon and a loopback inference fixture.
+    # No provider credential or paid network call is used by this image smoke.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the try-it image (layer-cached; the runtime stage matches the daemon image's)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/tryit/Dockerfile
+          load: true
+          tags: approved-tryit:local
+          cache-from: |
+            type=gha,scope=tryit
+            type=gha,scope=daemon
+          cache-to: type=gha,mode=max,scope=tryit
+      - name: Try-it smoke
+        env:
+          SKIP_BUILD: "1"
+        run: bash images/tryit/smoke.sh

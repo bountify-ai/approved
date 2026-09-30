@@ -27,12 +27,12 @@ SCENARIOS: list[tuple[str, str, str]] = [
     (
         "push-main",
         "git push origin main",
-        "push to main: manual; the judge escalates it",
+        "push to main: human approval under the demo policy",
     ),
     (
         "push-branch",
         "git push origin feat/checkout-retry",
-        "branch push: manual; judge READY",
+        "branch push: human approval under the demo policy",
     ),
     (
         "force-push",
@@ -104,12 +104,13 @@ def _verdict(body: dict | None) -> tuple[str, str]:
 
 
 def run_scenario(base: str, token: str, run_id: str, name: str, command: str) -> str:
+    store = os.environ.get("AGENT_STORE_DIR", "/data/demo")
     envelope = {
         "hook_event_name": "pre_tool_call",
         "tool_name": "terminal",
-        "tool_input": {"command": command, "workdir": "/data/demo"},
+        "tool_input": {"command": command, "workdir": store},
         "session_id": f"demo-{run_id}-{name}",
-        "cwd": "/data/demo",
+        "cwd": store,
     }
     wait_s = float(os.environ.get("AGENT_WAIT_S", "240"))
     deadline = time.monotonic() + wait_s

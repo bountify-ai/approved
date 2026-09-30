@@ -24,12 +24,14 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .inference_budget import BudgetError, InferenceCallBudget
 from .text import redact
 
 __all__ = [
     "DECISION_ALIASES",
     "REVIEWER_PROMPT_VERSION",
     "Decision",
+    "InferenceBudgetExhausted",
     "InferenceError",
     "Issue",
     "IssueCode",
@@ -70,6 +72,10 @@ class ReviewerParseError(ReviewerError):
 
 class InferenceError(ReviewerError):
     """The inference call failed (transport, HTTP, empty or truncated reply)."""
+
+
+class InferenceBudgetExhausted(InferenceError):
+    """No request was made because the configured paid-call cap was reached."""
 
 
 # ---------------------------------------------------------------- contracts
@@ -334,10 +340,12 @@ class LiveReviewer:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         retry_max_tokens: int = TRUNCATION_RETRY_MAX_TOKENS,
         client: Any | None = None,
+        call_budget: InferenceCallBudget | None = None,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
         self.retry_max_tokens = retry_max_tokens
+        self.call_budget = call_budget
         self._system = load_prompt(REVIEWER_PROMPT_VERSION)
         if client is None:
             from openai import OpenAI
@@ -356,13 +364,25 @@ class LiveReviewer:
         self._client = client
 
     def _complete(self, user: str, max_tokens: int) -> tuple[str, str | None, str]:
+        messages = [
+            {"role": "system", "content": self._system},
+            {"role": "user", "content": user},
+        ]
+        if len(self._system.encode("utf-8")) + len(user.encode("utf-8")) > 16_000:
+            raise InferenceError("inference input too large")
+        if max_tokens < 1 or max_tokens > 16_000:
+            raise InferenceError("inference output limit exceeded")
+        if self.call_budget is not None:
+            try:
+                self.call_budget.reserve()
+            except BudgetError as exc:
+                if str(exc) == "inference budget exhausted":
+                    raise InferenceBudgetExhausted("inference budget exhausted") from None
+                raise InferenceError(str(exc)) from None
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": self._system},
-                    {"role": "user", "content": user},
-                ],
+                messages=messages,
                 temperature=0,
                 max_tokens=max_tokens,
             )
