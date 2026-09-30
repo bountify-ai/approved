@@ -167,7 +167,8 @@ class Child:
 
     @property
     def alive(self) -> bool:
-        return self.proc is not None and self.proc.returncode is None
+        proc = self.proc
+        return proc is not None and proc.returncode is None
 
     def start(self) -> None:
         with self.lock:
@@ -223,9 +224,16 @@ class Child:
 class HealthProbe:
     """Polls the children's health endpoints on loopback; ``/health`` answers from this."""
 
-    def __init__(self, interval_s: float = 1.0, *, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        interval_s: float = 1.0,
+        *,
+        settings: Settings | None = None,
+        on_change: Callable[[str, bool], None] | None = None,
+    ) -> None:
         self._interval = interval_s
         self._settings = settings
+        self._on_change = on_change
         self._lock = threading.Lock()
         self._parts: dict[str, bool] = {"daemon": False, "fake_telegram": False, "judge": False}
         self._judge: dict[str, Any] = {}
@@ -246,13 +254,19 @@ class HealthProbe:
         )
         worker = judge.get("worker") if isinstance(judge, dict) else None
         with self._lock:
-            self._parts = {
+            previous = self._parts
+            current = {
                 "daemon": daemon_ok,
                 "fake_telegram": tg_status == 200,
                 "judge": j_status == 200,
             }
+            self._parts = current
             self._judge = worker if isinstance(worker, dict) else {}
             self._checked_at = time.monotonic()
+        if self._on_change is not None:
+            for part, healthy in current.items():
+                if previous[part] != healthy:
+                    self._on_change(part, healthy)
 
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
@@ -346,11 +360,18 @@ class LogVerifier:
 
 
 class Supervisor:
-    def __init__(self, settings: Settings, layout: Layout, reaper: Reaper) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        layout: Layout,
+        reaper: Reaper,
+        on_event: Callable[[str], None] | None = None,
+    ) -> None:
         self.settings = settings
         self.layout = layout
         self.reaper = reaper
-        self.health = HealthProbe(settings=settings)
+        self._on_event = on_event
+        self.health = HealthProbe(settings=settings, on_change=self._health_changed)
         self.verifier = LogVerifier(layout, reaper)
         self.booted = False
         self._lifecycle_lock = threading.RLock()
@@ -380,6 +401,14 @@ class Supervisor:
             cwd="/app",
             reaper=reaper,
         )
+
+    def _event(self, kind: str) -> None:
+        if self._on_event is not None:
+            self._on_event(kind)
+
+    def _health_changed(self, part: str, healthy: bool) -> None:
+        names = {"fake_telegram": "approver", "daemon": "gate", "judge": "judge"}
+        self._event(f"{names[part]}_{'healthy' if healthy else 'unavailable'}")
 
     def _daemon_env(self) -> dict[str, str]:
         assert self._credentials is not None
@@ -432,33 +461,40 @@ class Supervisor:
         log("tryit.credentials", written=str(self.layout.secrets), mode="0600")
         if not self._init_store(stop):
             return
+        self._event("store_ready")
         self.boot_error = None
         self.fake_tg_generation += 1
         self.fake_tg.start()
+        self._event("approver_started")
         if not self._await("fake_telegram", stop, 30):
             if not stop.is_set():
                 self.boot_error = "fake-telegram-unavailable"
                 log("tryit.boot.failed", level="error", part="fake_telegram")
+                self._event("approver_failed")
             return
         if stop.is_set():
             self.shutdown()
             return
         self.daemon.start()
+        self._event("gate_started")
         if not self._await("daemon", stop, 90):
             if not stop.is_set():
                 self.boot_error = "daemon-unavailable"
                 log("tryit.boot.failed", level="error", part="daemon")
+                self._event("gate_failed")
             return
         if stop.is_set():
             self.shutdown()
             return
         self.judge_live = judge_live
         self.judge.start()
+        self._event("judge_started")
         self._await("judge", stop, 60)
         if stop.is_set():
             self.shutdown()
             return
         self.booted = True
+        self._event("runtime_ready")
         self.verifier.request()
         log("tryit.boot.done", parts=self.health.parts(), judge="live" if judge_live else "offline")
 
