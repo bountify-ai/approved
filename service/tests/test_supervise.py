@@ -93,3 +93,51 @@ def test_health_answers_503_when_degraded(tmp_path) -> None:
     assert answer.status_code == 503
     assert answer.json()["status"] == "degraded"
     assert answer.json()["reason"] == "chain-break"
+
+
+# ------------------------------------------------------------------ serve's shutdown wait
+
+
+def _serve_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, **extra: str) -> None:
+    for name in ("CONSOLE_TOKEN_FILE", "TENANT_TOKEN_FILE", "JUDGE_TG_BOT_TOKEN", "TG_CHAT_ID"):
+        monkeypatch.delenv(name, raising=False)
+    env = {
+        "FACADE_URL": "https://facade.test",
+        "TENANT_TOKEN": "t" * 24,
+        "OFFLINE": "1",
+        "STATE_DIR": str(tmp_path),
+        "CONSOLE_TOKEN": "c" * 40,
+        **extra,
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_the_worker_join_outlasts_an_inflight_judgement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """RESILIENCE.md, SIGTERM: the in-flight judgement finishes. serve must wait at least the
+    reviewer deadline plus the advisory's send, whatever the two are configured to."""
+    import uvicorn
+
+    from approved.__main__ import SHUTDOWN_MARGIN_S, main, worker_join_timeout
+    from approved.config import load_settings
+
+    defaults = load_settings(
+        {"FACADE_URL": "https://facade.test", "TENANT_TOKEN": "t" * 24, "OFFLINE": "1"}
+    )
+    assert defaults.judge_timeout_s == 60
+    assert defaults.http_timeout_s == 20
+    assert worker_join_timeout(defaults) == 90
+
+    joined: list[float | None] = []
+    monkeypatch.setattr(WorkerRunner, "start", lambda self: None)
+    monkeypatch.setattr(WorkerRunner, "join", lambda self, timeout=None: joined.append(timeout))
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: None)
+    for judge, http in (("60", "20"), ("120", "30"), ("5", "2")):
+        _serve_env(monkeypatch, tmp_path, JUDGE_TIMEOUT_S=judge, HTTP_TIMEOUT_S=http)
+        assert main(["serve"]) == 0
+        waited = joined[-1]
+        assert waited is not None
+        assert waited == float(judge) + float(http) + SHUTDOWN_MARGIN_S
+        assert waited > float(judge) + float(http)

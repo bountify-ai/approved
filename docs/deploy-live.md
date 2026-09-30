@@ -99,11 +99,13 @@ maritime --json stop approved-judge && maritime --json start approved-judge
    dogfood's, name it exactly: `approved ask --allow-target approval-hermes-gated
    approval-hermes-gated "..."`). The approver's chat gets the
    gate's prompt and, from the judge bot, a message starting "Judge (advisory AI, not an
-   approval)" with a `Trace:` link. The first advisory after a start is the slowest: that call
-   also initialises Weave, and a reasoning model on W&B Inference can take tens of seconds.
-   The reviewer's deadline, `JUDGE_TIMEOUT_S`, defaults to 60 s; a call that outlives it
-   sends no message and is shown as `silent: timeout` in the console. Raise it if a slow
-   model is often silent.
+   approval)" with a `Trace:` link. Weave is initialised when the worker starts; the review
+   itself can still take tens of seconds with a reasoning model on W&B Inference (the first
+   live call outlived the old 25 s default). The reviewer's deadline, `JUDGE_TIMEOUT_S`,
+   defaults to 60 s; a call that outlives it sends no message and is shown as
+   `silent: timeout` in the console. Raise it if a slow model is often silent, knowing that a
+   review holds the judge's follow while it runs (see
+   [RESILIENCE.md](../RESILIENCE.md#the-judge-reads-between-hook-calls)).
 4. **A Weave trace.** The link opens an `approved.judge` call in
    <https://wandb.ai/bountify/judgy>. After the approver taps, the call gains
    `approved.human_decision` and `approved.agreement` feedback.

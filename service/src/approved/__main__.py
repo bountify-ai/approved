@@ -99,6 +99,19 @@ def build_worker(settings: Settings) -> Worker:
     )
 
 
+#: Beyond the in-flight judgement's own deadlines: the state save and the feedback thread's
+#: stop (5 s).
+SHUTDOWN_MARGIN_S = 10.0
+
+
+def worker_join_timeout(settings: Settings) -> float:
+    """How long ``serve`` waits for the worker after a stop. A stop lets the in-flight
+    judgement finish: the reviewer (up to ``JUDGE_TIMEOUT_S``), then the advisory's Telegram
+    send (up to ``HTTP_TIMEOUT_S``), then the state save and the feedback stop. A fixed wait
+    shorter than that would let the process exit mid-judgement."""
+    return settings.judge_timeout_s + settings.http_timeout_s + SHUTDOWN_MARGIN_S
+
+
 def serve() -> int:
     """Worker loop on a thread, console on uvicorn in the main thread; one process."""
     try:
@@ -154,7 +167,7 @@ def serve() -> int:
     server.run()  # returns on SIGTERM/SIGINT (uvicorn's handlers), or when the worker degrades
     runner.request_stop()
     worker.stop()
-    runner.join(timeout=60)
+    runner.join(timeout=worker_join_timeout(settings))
     code = runner.exit_code or 0
     log("console.stop", exit_code=code, degraded=runner.degraded_reason)
     return code
