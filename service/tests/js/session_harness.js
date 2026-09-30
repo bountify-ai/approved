@@ -21,16 +21,22 @@ const SESSION_SRC = fs.readFileSync(path.join(STATIC, "session.js"), "utf8");
 const CONSOLE_SRC = fs.readFileSync(path.join(STATIC, "console.js"), "utf8");
 
 const BASE = "/a/x";
+const ORIGIN = "https://api.maritime.test";
 const TOKEN = "TOKEN-console-9f8e7d6c5b4a";
 const SESSION = "1790683230." + "ab12".repeat(16);
 const KEY = "approved-session:" + BASE;
 
 let passed = 0;
+const failed = [];
+// Every check runs even after one fails, so a mutation shows every check it breaks.
 function check(name, fn) {
   return Promise.resolve()
     .then(fn)
     .then(() => { passed += 1; console.log("ok   " + name); })
-    .catch((err) => { console.log("FAIL " + name); throw err; });
+    .catch((err) => {
+      failed.push(name);
+      console.log("FAIL " + name + "\n" + (err && err.stack ? err.stack : err));
+    });
 }
 
 // ------------------------------------------------------------------ pure helpers
@@ -67,10 +73,38 @@ function pureChecks() {
   assert.strictEqual(pageTarget("#/metrics", "/a/x/login", BASE), "/metrics");
   assert.strictEqual(pageTarget("", "/a/x/policy", BASE), "/policy");
   assert.strictEqual(pageTarget("#evil", "/a/x/policy", BASE), "/policy");
+  // Fragment and path names that are properties of every object, traversal and host forms:
+  // none is a page, so every one resolves to the live page under this console's base.
+  for (const hash of HOSTILE_HASHES) {
+    assert.strictEqual(targetFromHash(hash), null, hash);
+    assert.strictEqual(pageTarget(hash, BASE + "/login", BASE), "/", hash);
+  }
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    assert.strictEqual(consolePath(name, "", PAGES), null, name);
+    assert.strictEqual(consolePath(name, "", FORMS), null, name);
+    assert.strictEqual(consolePath(BASE + name, BASE, PAGES), null, name);
+    assert.strictEqual(consolePath(BASE + "/" + name, BASE, PAGES), null, name);
+  }
   assert.strictEqual(needsSwap("none", true), true);
   for (const flow of ["header", "cookie", "open"]) assert.strictEqual(needsSwap(flow, true), false);
   assert.strictEqual(needsSwap("none", false), false);
 }
+
+const HOSTILE_HASHES = [
+  "#constructor",
+  "#__proto__",
+  "#toString",
+  "#hasOwnProperty",
+  "#valueOf",
+  "#/../../other/x",
+  "#//host",
+  "#//evil.test/a/x/",
+  "#/%2e%2e/x",
+  "#/./connect",
+  "#/connect/",
+  "#/CONNECT",
+  "#https://evil.test/"
+];
 
 // ------------------------------------------------------------------ a small DOM stub
 
@@ -255,6 +289,24 @@ const PAGES = {
       extraScripts: [BASE + "/static/policy.js"],
       main: [h("tbody", { id: "rows" })]
     }),
+  "live-evil-scripts": () =>
+    page({
+      flow: "header",
+      authed: true,
+      csrf: "session-csrf-1",
+      title: "Live · Approved",
+      extraScripts: [
+        "/a/y/static/evil.js",
+        BASE + "/static/../../y/static/evil.js",
+        BASE + "/static/%2e%2e/evil.js",
+        "https://evil.test" + BASE + "/static/evil.js",
+        "//evil.test/x.js",
+        BASE + "/static/evil.js?x=1",
+        BASE + "/static/sub/evil.js",
+        BASE + "/static/policy.js"
+      ],
+      main: [h("p", {}, "live")]
+    }),
   "live-cookie": () => page({ flow: "cookie", authed: true, title: "Live · Approved", main: [h("div", { id: "live" })] })
 };
 
@@ -292,6 +344,8 @@ function realm(opts) {
     removeItem: (k) => local.delete(k)
   };
   const location = {
+    origin: ORIGIN,
+    get href() { return ORIGIN + this.pathname + this.hash; },
     pathname: opts.pathname || BASE + "/login",
     hash: opts.hash || "",
     assign: (u) => events.assigns.push(u),
@@ -313,6 +367,9 @@ function realm(opts) {
       status: answer.status || 200,
       headers: { "content-type": answer.type || "text/html; charset=utf-8" }
     });
+    // Where the answer came from after any redirect: the request's own URL unless the stub
+    // server says otherwise.
+    Object.defineProperty(res, "url", { value: new URL(answer.url || url, ORIGIN).href });
     return Promise.resolve(res);
   }
   class DOMParser {
@@ -336,7 +393,7 @@ function realm(opts) {
   }
   const g = {
     document, sessionStorage, localStorage, location, history, fetch, DOMParser, FormData,
-    URLSearchParams, Response, console, navigator: {},
+    URLSearchParams, URL, Response, console, navigator: {},
     setTimeout: () => 0,
     setInterval: (fn) => { events.intervals.push(fn); return events.intervals.length; },
     clearInterval: (id) => { events.cleared.push(id); }
@@ -428,7 +485,9 @@ async function main() {
     // The connect form posts with the header and swaps in the answer.
     r.g.fetch = (url, init) => {
       r.events.fetches.push({ url: url, init: init });
-      return Promise.resolve(new Response("PAGE:connect-bundle", { status: 200, headers: { "content-type": "text/html" } }));
+      const res = new Response("PAGE:connect-bundle", { status: 200, headers: { "content-type": "text/html" } });
+      Object.defineProperty(res, "url", { value: ORIGIN + url });
+      return Promise.resolve(res);
     };
     const connect = r.document.querySelector('form[action="' + BASE + '/connect"]');
     assert.ok(r.submit(connect).defaultPrevented);
@@ -562,6 +621,61 @@ async function main() {
     assert.strictEqual(r.events.reloads, 1);
   });
 
+  await check("hostile fragments load the live page under this console's base, nothing else", async () => {
+    for (const hash of HOSTILE_HASHES) {
+      const r = track(realm({ page: "login", stored: SESSION, hash: hash, server: () => ({ body: "PAGE:live-header" }) }));
+      r.ready();
+      await settle();
+      assert.strictEqual(r.events.fetches.length, 1, hash);
+      assert.strictEqual(r.events.fetches[0].url, BASE + "/", hash);
+      assert.deepStrictEqual(r.events.replaced, [BASE + "/#/"], hash);
+    }
+  });
+
+  await check("only 2xx HTML from this console's base is swapped in", async () => {
+    const cases = [
+      { answer: { status: 500, body: "PAGE:connect-bundle" }, line: "The console refused that (HTTP 500)." },
+      { answer: { status: 502, body: "<html>proxy</html>" }, line: "The console refused that (HTTP 502)." },
+      { answer: { status: 200, body: "PAGE:connect-bundle", url: "/a/y/connect" }, line: "The console refused that (HTTP 200)." },
+      { answer: { status: 200, body: "PAGE:connect-bundle", url: "/a/xy/connect" }, line: "The console refused that (HTTP 200)." },
+      { answer: { status: 200, body: "PAGE:connect-bundle", url: "https://evil.test" + BASE + "/connect" }, line: "The console refused that (HTTP 200)." },
+      { answer: json({ detail: "<b>attacker text</b>" }, 403), line: "The console refused that (HTTP 403)." },
+      { answer: { status: 422, body: "PAGE:connect-bundle" }, line: "The console could not build that bundle (HTTP 422): check the tenant name and the facade URL." }
+    ];
+    for (const c of cases) {
+      const answers = [{ body: "PAGE:connect-header" }, c.answer];
+      const r = track(realm({ page: "login", stored: SESSION, hash: "#/connect", server: () => answers.shift() }));
+      r.ready();
+      await settle();
+      const form = r.document.querySelector('form[action="' + BASE + '/connect"]');
+      assert.ok(r.submit(form).defaultPrevented);
+      await settle();
+      assert.ok(!r.document.body.textContent.includes("connect-acme.sh bundle"), JSON.stringify(c.answer));
+      assert.strictEqual(r.document.querySelector(".error").textContent, c.line);
+    }
+    // The first load too: an answer from another agent's path is never swapped in.
+    const r = track(realm({ page: "login", stored: SESSION, hash: "#/connect", server: () => ({ body: "PAGE:connect-header", url: "/a/y/connect" }) }));
+    r.ready();
+    await settle();
+    assert.ok(!r.document.querySelector('form[action="' + BASE + '/connect"]'), "not swapped");
+    assert.strictEqual(r.pending(), false);
+    assert.ok(r.document.querySelector(".error").textContent.startsWith("The console answered HTTP 200"));
+    // And a sign-in answer from elsewhere is not believed.
+    const s = track(realm({ page: "login", server: () => Object.assign(json({ flow: "header", session: SESSION }), { url: "/a/y/login" }) }));
+    s.ready();
+    s.submit(s.document.querySelector("form"));
+    await settle();
+    assert.strictEqual(s.store.size, 0, "nothing stored");
+    assert.strictEqual(s.events.fetches.length, 1);
+  });
+
+  await check("only <base>/static/<name>.js scripts are ever added", async () => {
+    const r = track(realm({ page: "login", stored: SESSION, server: () => ({ body: "PAGE:live-evil-scripts" }) }));
+    r.ready();
+    await settle();
+    assert.deepStrictEqual(r.events.appended, [BASE + "/static/policy.js"]);
+  });
+
   await check("the session value and the token never reach a URL or another request", async () => {
     for (const r of allRealms) {
       const urls = []
@@ -586,6 +700,10 @@ async function main() {
     }
   });
 
+  if (failed.length) {
+    console.log("session harness: " + failed.length + " of " + (passed + failed.length) + " checks FAILED");
+    process.exit(1);
+  }
   console.log("session harness: all " + passed + " checks passed");
 }
 

@@ -158,6 +158,20 @@
     root.location.assign(base() + "/login#" + (rel || here() || "/"));
   }
 
+  // The answer came from this console: same origin, and a path under this console's own base.
+  // On Maritime's shared origin every agent is same-origin, so the origin alone proves nothing.
+  function fromConsole(r) {
+    try {
+      var u = new root.URL(r.url, root.location.href);
+      var b = base();
+      return u.origin === root.location.origin && (u.pathname === b || u.pathname.indexOf(b + "/") === 0);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  var SCRIPT_NAME = /^[a-z]+\.js$/;
+
   function swap(text) {
     var next = new root.DOMParser().parseFromString(text, "text/html");
     ["csrf-token", "session-flow"].forEach(function (name) {
@@ -167,14 +181,17 @@
     doc.title = next.title;
     doc.body.replaceWith(doc.adoptNode(next.body));
     // The new page's scripts that this document has not loaded yet (policy.js after the
-    // sign-in document). Same-origin /static only, as the CSP requires anyway.
+    // sign-in document). The CSP's script-src 'self' does not narrow this: on a shared origin
+    // it admits every agent's paths. What does: the page came from this console (swap runs
+    // only on fromConsole answers), and a script is added only as <base>/static/<name>.js.
+    var prefix = base() + "/static/";
     var have = {};
     Array.prototype.forEach.call(doc.querySelectorAll("script[src]"), function (s) {
       have[s.getAttribute("src")] = true;
     });
     Array.prototype.forEach.call(next.querySelectorAll("script[src]"), function (s) {
-      var src = s.getAttribute("src");
-      if (have[src]) return;
+      var src = s.getAttribute("src") || "";
+      if (have[src] || src.indexOf(prefix) !== 0 || !SCRIPT_NAME.test(src.slice(prefix.length))) return;
       var el = doc.createElement("script");
       el.src = src;
       doc.head.appendChild(el);
@@ -198,30 +215,35 @@
     setMeta("session-flow", "header");
   }
 
+  function failed(message) {
+    reveal();
+    if (!ready) runPage();
+    notice(message);
+  }
+
   function loadInto(rel) {
+    if (!own.call(PAGES, rel)) rel = "/"; // only this console's own pages, under its base
     var headers = {};
     headers[SESSION_HEADER] = stored();
     return root.fetch(base() + rel, { credentials: "same-origin", cache: "no-store", headers: headers })
       .then(function (r) {
         if (r.status === 401) { expired(rel); return null; }
+        var type = r.headers.get("content-type") || "";
+        var json = type.indexOf("application/json") === 0;
+        var html = type.indexOf("text/html") === 0;
+        if (!r.ok || !fromConsole(r) || !(json || html)) {
+          failed("The console answered HTTP " + r.status + "; reload to try again.");
+          return null;
+        }
         return r.text().then(function (text) {
-          if (!r.ok) {
-            reveal();
-            notice("The console answered HTTP " + r.status + ".");
-            return;
-          }
-          var type = r.headers.get("content-type") || "";
-          if (type.indexOf("application/json") === 0) showJson(rel, text);
+          if (json) showJson(rel, text);
           else swap(text);
           root.history.replaceState(null, "", base() + rel + "#" + rel);
           reveal();
           runPage();
         });
       })
-      .catch(function () {
-        reveal();
-        notice("Console unreachable; reload to try again.");
-      });
+      .catch(function () { failed("Console unreachable; reload to try again."); });
   }
 
   function formBody(form) {
@@ -230,8 +252,8 @@
 
   function readJson(r) {
     return r.json().then(
-      function (body) { return { status: r.status, body: body || {} }; },
-      function () { return { status: r.status, body: {} }; }
+      function (body) { return { status: r.status, own: fromConsole(r), body: body || {} }; },
+      function () { return { status: r.status, own: fromConsole(r), body: {} }; }
     );
   }
 
@@ -251,16 +273,20 @@
       .then(readJson)
       .then(function (res) {
         var target = targetFromHash(root.location.hash) || "/";
-        if (res.status === 200 && res.body.flow === "header" && typeof res.body.session === "string") {
+        if (res.own && res.status === 200 && res.body.flow === "header" && typeof res.body.session === "string") {
           if (!remember(res.body.session)) {
             notice("This browser keeps no session storage for this page, so the console cannot keep you signed in.", form);
             return null;
           }
           return loadInto(target);
         }
-        if (res.status === 200 && res.body.flow === "cookie") {
+        if (res.own && res.status === 200 && res.body.flow === "cookie") {
           forget();
           root.location.assign(base() + target);
+          return null;
+        }
+        if (!res.own) {
+          notice("Sign-in failed (HTTP " + res.status + ").", form);
           return null;
         }
         if (res.status === 403) { // a stale CSRF cookie: a fresh sign-in page carries a new one
@@ -284,7 +310,7 @@
       .then(function (r) {
         if (r.status === 401) { expired(here() || "/"); return null; }
         if (rel === "/logout") {
-          if (r.ok) {
+          if (r.ok && fromConsole(r)) {
             forget();
             root.location.assign(base() + "/login");
           } else {
@@ -293,16 +319,17 @@
           return null;
         }
         var type = r.headers.get("content-type") || "";
-        return r.text().then(function (text) {
-          if (type.indexOf("text/html") === 0) {
+        if (r.ok && fromConsole(r) && type.indexOf("text/html") === 0) {
+          return r.text().then(function (text) {
             swap(text);
             runPage();
-            return;
-          }
-          var detail = "";
-          try { detail = JSON.parse(text).detail || ""; } catch (e) { /* not JSON */ }
-          notice(detail || "The console refused that (HTTP " + r.status + ").");
-        });
+          });
+        }
+        // Anything else: a fixed line, never the answer's own content.
+        notice(r.status === 422
+          ? "The console could not build that bundle (HTTP 422): check the tenant name and the facade URL."
+          : "The console refused that (HTTP " + r.status + ").");
+        return null;
       })
       .catch(function () { notice("Console unreachable; try again."); });
   }
