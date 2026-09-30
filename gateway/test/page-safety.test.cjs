@@ -11,10 +11,11 @@ const script=match[1].replace(/\}\)\(\);\s*$/, 'globalThis.__pageTest={plainTele
 const nodes=new Map();
 const document={
   querySelector(){return null;},
-  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],style:{},open:false,addEventListener(){},replaceChildren(...items){this.children=items;},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},querySelector(sel){return this.children.find(n=>sel==='details.history'?n.className==='history':n.className==='current-payload');},setAttribute(){},getBoundingClientRect(){return {top:340};},showModal(){this.open=true;},close(){this.open=false;},scrollIntoView(){},focus(){},textContent:'',hidden:false});return nodes.get(id);},
+  getElementById(id){if(!nodes.has(id))nodes.set(id,{children:[],style:{},open:false,addEventListener(){},replaceChildren(...items){this.children=items;},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);},querySelector(sel){return this.children.find(n=>sel==='details.history'?n.className==='history':n.className==='current-payload');},setAttribute(){},getBoundingClientRect(){return {top:340};},showModal(){this.open=true;},close(){this.open=false;},scrollIntoView(options){this.lastScrollOptions=options;},focus(options){this.lastFocusOptions=options;},textContent:'',hidden:false});return nodes.get(id);},
   createElement(tag){return {tagName:tag,children:[],textContent:'',className:'',addEventListener(){},appendChild(n){this.children.push(n);},append(...items){this.children.push(...items);}};},
 };
-const context={document,location:{href:'https://gateway.example/'},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},URL,setInterval(){}};
+const parentMessages=[];
+const context={document,window:{innerHeight:844,parent:{postMessage(data,origin){parentMessages.push({data,origin});}}},requestAnimationFrame(cb){cb();},location:{href:'https://gateway.example/'},sessionStorage:{getItem(){return null;},setItem(){},removeItem(){}},URL,setInterval(){}};
 vm.runInNewContext(script,context);
 test('chat formatting becomes inert readable text',()=>{
   assert.equal(context.__pageTest.plainTelegram('<b>Approval</b> &lt;required&gt; <script>alert(1)</script>'),'Approval <required> alert(1)');
@@ -97,7 +98,15 @@ test('policy modal renders plain current bytes and ignores a stale session respo
   context.fetch=async()=>new Response(JSON.stringify({path:'/data/tryit/sessions/one/demo/APPROVAL.md',sha256:'a'.repeat(64),text:'<b>read.*</b>'}),{headers:{'content-type':'application/json'}});
   await page.openPolicy();
   assert.equal(nodes.get('policy-dialog').open,true);
-  assert.equal(nodes.get('policy-dialog').style.top,'220px');
+  assert.equal(nodes.get('policy-dialog').style.top,'340px');
+  assert.equal(nodes.get('policy-dialog').style.maxHeight,'492px');
+  assert.equal(nodes.get('policy-dialog').style.height,'492px');
+  assert.equal(nodes.get('policy-dialog').scrollTop,0);
+  assert.equal(nodes.get('policy-close').lastFocusOptions.preventScroll,true);
+  assert.equal(parentMessages.length,2);
+  assert.equal(parentMessages[1].data.type,'approved-demo-policy-reveal-v1');
+  assert.equal(parentMessages[1].data.y,340);
+  assert.equal(parentMessages[1].origin,'https://approval.md');
   assert.equal(nodes.get('policy-path').textContent,'/data/tryit/sessions/one/demo/APPROVAL.md');
   assert.equal(nodes.get('policy-text').textContent,'<b>read.*</b>');
   assert.equal(nodes.get('policy-sha').textContent,'SHA-256 '+'a'.repeat(64));
@@ -110,6 +119,7 @@ test('policy modal renders plain current bytes and ignores a stale session respo
   assert.equal(nodes.get('policy-dialog').open,false);
   assert.equal(nodes.get('policy-path').textContent,'');
   assert.equal(nodes.get('policy-text').textContent,'');
+  assert.equal(parentMessages.length,3);
 });
 
 test('judge absence reason is visible as text while the run waits for a human',()=>{
