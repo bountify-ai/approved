@@ -19,3 +19,15 @@ test('page CSP pins fixed inline code by hash',async()=>{const r=res();await pro
 test('gateway shell renders without contacting a sleeping backend',async()=>{const r=res();await proxy({method:'GET',url:'/?auto=1',headers:{}},r,'/',{},async()=>{throw Error('backend asleep');});assert.equal(r.statusCode,200);assert.match(String(r.body),/Get Approved/);assert.match(r.headers['content-security-policy'],/script-src 'sha256-/);});
 
 test('budget refusal is explicit without passing backend details through',async()=>{const r=await call('/api/run',{method:'POST',headers:{'content-type':'application/json','x-approved-session':'a'.repeat(32)},body:{}},async()=>new Response(JSON.stringify({code:'budget-exhausted',message:'private ledger path and token'}),{status:503,headers:{'content-type':'application/json'}}));assert.equal(r.statusCode,503);assert.match(r.body,/allowance is used up/);assert.match(r.body,/approval buttons still work/);assert.doesNotMatch(r.body,/private ledger/);});
+
+test('only fixed pre-execution run refusal codes cross the gateway',async()=>{
+  const session='a'.repeat(32);const req={method:'POST',headers:{'content-type':'application/json','x-approved-session':session},body:{}};
+  for(const code of ['starting','session-starting','chat-unavailable']){
+    const r=await call('/api/run',req,async()=>new Response(JSON.stringify({code,message:'internal detail'}),{status:503,headers:{'content-type':'application/json'}}));
+    assert.equal(JSON.parse(r.body).code,code);
+    assert.doesNotMatch(r.body,/internal detail/);
+  }
+  const r=await call('/api/run',req,async()=>new Response(JSON.stringify({code:'budget-exhausted',message:'private ledger path'}),{status:503,headers:{'content-type':'application/json'}}));
+  assert.equal(JSON.parse(r.body).code,undefined);
+  assert.doesNotMatch(r.body,/private ledger path/);
+});
