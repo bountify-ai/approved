@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -58,6 +59,7 @@ LOGIN_HEADER = "x-approved-login"
 #: Longer than any value :meth:`ConsoleAuth.session_cookie` issues; anything longer is refused
 #: before it is parsed or MAC-compared.
 MAX_SESSION_CHARS = 128
+_SESSION_FORMAT = re.compile(r"(0|[1-9][0-9]{0,11})\.([0-9a-f]{64})", re.ASCII)
 
 
 FUTURE_SKEW_S = 60
@@ -153,11 +155,14 @@ class ConsoleAuth:
         """True for a session value this token issued, under the current epoch, not expired."""
         if self._token is None or len(value) > MAX_SESSION_CHARS:
             return False
-        issued_text, _, mac = value.partition(".")
-        if not issued_text.isdigit() or len(issued_text) > 12 or not mac:
+        # One accepted spelling per session: ASCII digits without a sign or leading zero, a
+        # dot, and the MAC exactly as hexdigest() writes it. ``str.isdigit`` would admit
+        # superscripts (int() then raises) and other scripts' digits (int() parses them).
+        match = _SESSION_FORMAT.fullmatch(value)
+        if match is None:
             return False
-        issued = int(issued_text)
-        if not hmac.compare_digest(mac.encode(), self._mac(issued).encode()):
+        issued = int(match.group(1))
+        if not hmac.compare_digest(match.group(2).encode(), self._mac(issued).encode()):
             return False
         age = self._clock() - issued
         return -FUTURE_SKEW_S <= age <= self.max_age_s

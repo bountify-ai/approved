@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
@@ -302,6 +303,83 @@ def test_auth_judges_a_header_request_by_the_header_alone() -> None:
     assert auth.csrf_ok(valid, auth.session_csrf(good))
     assert auth.csrf_for(valid) == (auth.session_csrf(good), False)
     assert not auth.verify_session(good + "0" * 128)  # over-long values are refused unparsed
+
+
+def test_a_session_value_has_exactly_one_accepted_spelling() -> None:
+    now = [1_000_000.0]
+    auth = ConsoleAuth(SecretStr(CONSOLE_TOKEN), demo=False, clock=lambda: now[0])
+    good = auth.session_cookie()
+    issued, mac = good.split(".")
+    assert auth.verify_session(good)
+    for bad in (
+        f"0{issued}.{mac}",  # leading zero
+        f"+{issued}.{mac}",  # sign
+        f" {issued}.{mac}",
+        f"{issued}.{mac}\n",
+        f"{issued}.{mac.upper()}",
+        f"{issued}.{mac}0",
+        f"{issued}.{mac[:-1]}",
+        f"{issued}..{mac}",
+        "\u00b2.{mac}".replace("{mac}", mac),  # superscript two: isdigit() said yes
+        "\u00b9\u00b2\u00b3." + mac,
+        "".join(chr(0x0660 + int(d)) for d in issued) + "." + mac,  # Arabic-Indic digits
+        "".join(chr(0xFF10 + int(d)) for d in issued) + "." + mac,  # fullwidth digits
+        "1" * 13 + "." + mac,
+        "",
+        ".",
+    ):
+        assert not auth.verify_session(bad), repr(bad)
+
+
+def _raw_get(app: Any, path: str, headers: list[tuple[bytes, bytes]]) -> int:
+    """One GET straight into the ASGI app with these exact header bytes. The test client
+    re-encodes non-ASCII header bytes as UTF-8 (``\\xb2`` arrives as ``\\xc2\\xb2``), so it
+    cannot deliver what a raw HTTP client can."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"console.test"), *headers],
+        "client": ("203.0.113.7", 1234),
+        "server": ("console.test", 443),
+    }
+    status: list[int] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            status.append(message["status"])
+
+    anyio.run(app, scope, receive, send)
+    return status[0]
+
+
+RAW_BAD = (
+    b"\xb2." + b"a" * 64,  # superscript two in latin-1: str.isdigit() said yes, int() raised
+    b"\xb9\xb2\xb3." + b"a" * 64,
+    b"01000000." + b"0" * 64,
+    b"+1." + b"0" * 64,
+)
+
+
+@pytest.mark.parametrize("raw", RAW_BAD)
+def test_malformed_session_bytes_are_401_never_500(tmp_path: Path, raw: bytes) -> None:
+    app = create_app(context_from_settings(_settings(tmp_path), lambda: dict(STATUS)))
+    for path in ("/", "/metrics", "/partials/live", "/connect", "/policy"):
+        assert _raw_get(app, path, [(SESSION.encode(), raw)]) == 401, (raw, path)
+    for path in ("/login", "/health"):  # exempt routes still answer, never 500
+        assert _raw_get(app, path, [(SESSION.encode(), raw)]) == 200, (raw, path)
+    cookie = [(b"cookie", b"approved_console=" + raw)]
+    assert _raw_get(app, "/metrics", cookie) == 401
+    assert _raw_get(app, "/", cookie) == 303
 
 
 def _clocked(tmp_path: Path, now: list[float], token: str = CONSOLE_TOKEN) -> MaritimeProxy:
