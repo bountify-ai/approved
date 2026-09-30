@@ -225,7 +225,15 @@
     if (!own.call(PAGES, rel)) rel = "/"; // only this console's own pages, under its base
     var headers = {};
     headers[SESSION_HEADER] = stored();
-    return root.fetch(base() + rel, { credentials: "same-origin", cache: "no-store", headers: headers })
+    // redirect: "error" on every request that carries the session (and on the sign-in, whose
+    // answer does): the header is never replayed along a redirect chain, and a redirected
+    // answer rejects like an unreachable console.
+    return root.fetch(base() + rel, {
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      headers: headers
+    })
       .then(function (r) {
         if (r.status === 401) { expired(rel); return null; }
         var type = r.headers.get("content-type") || "";
@@ -267,6 +275,7 @@
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
+      redirect: "error",
       headers: headers,
       body: body
     })
@@ -304,6 +313,7 @@
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
+      redirect: "error",
       headers: sessionHeaders({}),
       body: formBody(form)
     })

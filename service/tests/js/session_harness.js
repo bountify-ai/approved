@@ -362,7 +362,13 @@ function realm(opts) {
   function fetch(url, init) {
     const call = { url: url, init: init || {} };
     events.fetches.push(call);
-    const answer = opts.server(call);
+    let answer = opts.server(call);
+    // A 3xx: fetch rejects under redirect "error"; otherwise it follows (to `followed`).
+    if (answer.status >= 300 && answer.status < 400) {
+      if (call.init.redirect === "error") return Promise.reject(new TypeError("Failed to fetch"));
+      events.followed = (events.followed || 0) + 1;
+      answer = answer.followed;
+    }
     const res = new Response(answer.body === undefined ? "" : answer.body, {
       status: answer.status || 200,
       headers: { "content-type": answer.type || "text/html; charset=utf-8" }
@@ -439,6 +445,20 @@ function json(body, status) {
 
 async function main() {
   await check("pure helpers", pureChecks);
+
+  await check("every fetch in the console's scripts refuses redirects (source check)", () => {
+    // policy.js's preview is not run here, so its fetch is pinned by reading the source: each
+    // fetch( call's options object names redirect: "error".
+    for (const name of ["session.js", "console.js", "policy.js"]) {
+      const src = fs.readFileSync(path.join(STATIC, name), "utf8");
+      const calls = src.split(/\bfetch\(/).slice(1);
+      assert.ok(calls.length > 0, name);
+      for (const call of calls) {
+        const options = call.slice(0, call.indexOf("})") + 2);
+        assert.ok(/redirect: "error"/.test(options), name + ": a fetch without redirect: \"error\"");
+      }
+    }
+  });
 
   await check("sign-in behind the proxy: header flow, sessionStorage, fragment target", async () => {
     const r = track(realm({
@@ -669,6 +689,38 @@ async function main() {
     assert.strictEqual(s.events.fetches.length, 1);
   });
 
+  await check("a redirect answering a header-carrying request is never followed or swapped", async () => {
+    const redirect = { status: 303, followed: { body: "PAGE:connect-bundle" } };
+    // The first load.
+    const r = track(realm({ page: "login", stored: SESSION, hash: "#/connect", server: () => redirect }));
+    r.ready();
+    await settle();
+    assert.strictEqual(r.events.fetches.length, 1);
+    assert.strictEqual(r.events.followed, undefined, "not followed");
+    assert.ok(!r.document.body.textContent.includes("connect-acme.sh bundle"), "not swapped");
+    assert.strictEqual(r.document.querySelector(".error").textContent, "Console unreachable; reload to try again.");
+    assert.strictEqual(r.pending(), false);
+    // A form post, and the live poll, on a signed-in page.
+    const answers = [{ body: "PAGE:connect-header" }, redirect];
+    const p = track(realm({ page: "login", stored: SESSION, hash: "#/connect", server: () => answers.shift() }));
+    p.ready();
+    await settle();
+    p.submit(p.document.querySelector('form[action="' + BASE + '/connect"]'));
+    await settle();
+    assert.strictEqual(p.events.followed, undefined);
+    assert.ok(!p.document.body.textContent.includes("connect-acme.sh bundle"));
+    assert.strictEqual(p.document.querySelector(".error").textContent, "Console unreachable; try again.");
+    const polls = [{ body: "PAGE:live-header" }, { status: 302, followed: { body: "someone else's page" } }];
+    const l = track(realm({ page: "login", stored: SESSION, server: () => polls.shift() }));
+    l.ready();
+    await settle();
+    l.events.intervals[0]();
+    await settle();
+    assert.strictEqual(l.events.followed, undefined);
+    assert.strictEqual(l.document.getElementById("live").innerHTML, undefined, "fragment untouched");
+    assert.strictEqual(l.document.getElementById("live-updated").textContent, "console unreachable, retrying");
+  });
+
   await check("only <base>/static/<name>.js scripts are ever added", async () => {
     const r = track(realm({ page: "login", stored: SESSION, server: () => ({ body: "PAGE:live-evil-scripts" }) }));
     r.ready();
@@ -695,6 +747,9 @@ async function main() {
         const body = f.init.body ? String(f.init.body) : "";
         if (f.url !== BASE + "/login") assert.ok(!body.includes(TOKEN), "token sent to " + f.url);
         if (f.url === BASE + "/login") assert.ok(!("X-Approved-Session" in headers), "no session on sign-in");
+        if ("X-Approved-Session" in headers || f.url === BASE + "/login") {
+          assert.strictEqual(f.init.redirect, "error", "a redirect could replay the header: " + f.url);
+        }
       }
       assert.ok(!Array.from(r.local.values()).some((v) => v.includes(SESSION)), "localStorage");
     }

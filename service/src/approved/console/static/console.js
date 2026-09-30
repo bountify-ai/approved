@@ -37,6 +37,7 @@
       fetch(base + "/partials/live", {
         credentials: "same-origin",
         cache: "no-store",
+        redirect: "error", // never replay the session header along a redirect
         headers: session ? session.headers({}) : {}
       })
         .then(function (r) {

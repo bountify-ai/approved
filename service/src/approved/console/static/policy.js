@@ -194,6 +194,7 @@
         fetch(base + "/api/preview", {
           method: "POST",
           credentials: "same-origin",
+          redirect: "error", // never replay the session header along a redirect
           headers: session ? session.headers(headers) : headers,
           body: JSON.stringify({ action_class: pick.value, command: cmd.value })
         })

@@ -98,6 +98,8 @@ The console and the CLI add:
   of a cookie (12-hour lifetime, revoke-all and token rotation apply unchanged). The script
   keeps it in the tab's `sessionStorage` (never `localStorage`) and sends it as
   `X-Approved-Session` on its own requests; it never goes into a URL, a log line or a page.
+  Every request that carries it (and the sign-in, whose answer carries it) refuses redirects
+  (`fetch` with `redirect: "error"`), so the header is never replayed along a redirect chain.
   A request carrying that header is judged by the header alone: when the value does not
   verify, every route except `/health`, `/login`, `/static` and `/downloads` answers 401 JSON,
   with no page content and no fallback to a cookie. State-changing requests in this flow need
