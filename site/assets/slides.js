@@ -54,10 +54,13 @@
     split: true,
     chat: true,
     code: true,
+    hero: true,
+    grid: true,
+    ledger: true,
     join: true,
     end: true
   };
-  var COLUMNS = { split: true, chat: true, code: true }; // heading left, content right
+  var COLUMNS = { split: true, chat: true, code: true, hero: true }; // heading left, content right
   var KEY_LINE = /^(class|badge|qr|qr-caption|fragments):[ \t]*(.+?)[ \t]*$/;
   var PH_RE = /\{\{\s*([A-Z0-9_]+)\s*\}\}/g;
   var PH_ONE = /\{\{\s*([A-Z0-9_]+)\s*\}\}/;
@@ -228,6 +231,42 @@
   }
 
   /** title / end: the approval.md wordmark (1560×320) in the right-hand column. */
+  /** grid: every "**Title** — body" paragraph is a stat tile in a two- or three-up grid. */
+  function gridStats(section, fragments) {
+    var wrap = el("div", "stat-grid");
+    var stats = Array.prototype.filter.call(section.querySelectorAll(":scope > p"), function (p) {
+      return p.firstChild && p.firstChild.nodeName === "STRONG";
+    });
+    if (!stats.length) return;
+    stats.forEach(function (p) {
+      p.classList.add("stat");
+      if (fragments) p.classList.add("fragment");
+      var after = p.firstChild.nextSibling;
+      if (after && after.nodeType === 3) after.nodeValue = after.nodeValue.replace(/^\s*[—–-]\s*/, "");
+      wrap.appendChild(p);
+    });
+    var notes = section.querySelector(":scope > aside");
+    section.insertBefore(wrap, notes);
+  }
+
+  /** ledger: each "## heading" and the list under it become one column of three. */
+  function ledgerColumns(section) {
+    var wrap = el("div", "ledger");
+    var col = null;
+    Array.prototype.slice.call(section.children).forEach(function (node) {
+      if (node.tagName === "H2") {
+        col = el("div", "ledger-col");
+        wrap.appendChild(col);
+        col.appendChild(node);
+      } else if (col && (node.tagName === "UL" || node.tagName === "P")) {
+        col.appendChild(node);
+      }
+    });
+    if (!wrap.children.length) return;
+    var notes = section.querySelector(":scope > aside");
+    section.insertBefore(wrap, notes);
+  }
+
   function mascot(section) {
     var img = el("img", "deck-mascot");
     img.src = ASSETS + "wordmark.svg";
@@ -360,6 +399,12 @@
     if (COLUMNS[layout]) {
       columns(section);
       statParagraphs(section, fragments);
+    }
+    if (layout === "grid") gridStats(section, fragments);
+    if (layout === "ledger") ledgerColumns(section);
+    if (layout === "big") {
+      var shout = section.querySelector(":scope > h1, :scope > h2");
+      if (shout && shout.textContent.trim().length > 48) shout.classList.add("shout--long");
     }
 
     highlightPlaceholders(section);

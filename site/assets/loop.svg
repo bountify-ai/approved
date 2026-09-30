@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 520" width="1100" height="520" role="img" aria-labelledby="loop-title loop-desc">
+  <title id="loop-title">The W&amp;B loop</title>
+  <desc id="loop-desc">A request in the log is reviewed by the reviewer on W&amp;B Inference, traced in Weave, posted as an advisory beside the Telegram prompt; the human's tap is attached to the trace as feedback, and a Weave evaluation scores the judge against those decisions.</desc>
+  <defs>
+    <marker id="lp-head" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#17191d"/>
+    </marker>
+    <marker id="lp-head-green" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#0f7a46"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1100" height="520" rx="26" fill="#f6f3ec"/>
+
+  <!-- ring path, clockwise from the top: log -> reviewer -> trace -> advisory -> tap -> feedback -> evaluation -> back -->
+  <g fill="none" stroke="#17191d" stroke-width="4" stroke-linecap="round">
+    <path d="M 335 90 L 428 90" marker-end="url(#lp-head)"/>
+    <path d="M 672 90 L 765 90" marker-end="url(#lp-head)"/>
+    <path d="M 900 138 L 900 208" marker-end="url(#lp-head)"/>
+    <path d="M 765 258 L 672 258" marker-end="url(#lp-head)"/>
+    <path d="M 428 258 L 335 258" marker-end="url(#lp-head)"/>
+    <path d="M 200 306 L 200 376" marker-end="url(#lp-head)"/>
+  </g>
+  <g fill="none" stroke="#0f7a46" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 9">
+    <path d="M 335 424 L 900 424 L 900 308" marker-end="url(#lp-head-green)"/>
+  </g>
+
+  <!-- node: request in the log -->
+  <g transform="translate(70,50)">
+    <rect x="6" y="6" width="265" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="265" height="88" rx="18" fill="#ffffff" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="JetBrains Mono, ui-monospace, monospace" font-size="20" font-weight="700" fill="#17191d">approval.requested</text>
+    <text x="20" y="66" font-family="Avenir Next, system-ui, sans-serif" font-size="19" fill="#4a4f58">in the tenant's hash-chained log</text>
+  </g>
+
+  <!-- node: reviewer on W&B Inference -->
+  <g transform="translate(428,50)">
+    <rect x="6" y="6" width="244" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="244" height="88" rx="18" fill="#fdf0c8" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#17191d">Reviewer</text>
+    <text x="20" y="66" font-family="Avenir Next, system-ui, sans-serif" font-size="19" fill="#4a4f58">on W&amp;B Inference</text>
+  </g>
+
+  <!-- node: weave trace -->
+  <g transform="translate(765,50)">
+    <rect x="6" y="6" width="270" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="270" height="88" rx="18" fill="#ffffff" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#17191d">Weave trace</text>
+    <text x="20" y="66" font-family="JetBrains Mono, ui-monospace, monospace" font-size="18" fill="#4a4f58">weave.op approved.judge</text>
+  </g>
+
+  <!-- node: advisory on telegram -->
+  <g transform="translate(672,214)">
+    <rect x="6" y="6" width="300" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="300" height="88" rx="18" fill="#ffffff" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#17191d">Advisory beside the prompt</text>
+    <text x="20" y="66" font-family="Avenir Next, system-ui, sans-serif" font-size="19" fill="#4a4f58">its own bot · no buttons · trace link</text>
+  </g>
+
+  <!-- node: human tap -->
+  <g transform="translate(70,214)">
+    <rect x="6" y="6" width="265" height="88" rx="18" fill="#0f7a46"/>
+    <rect x="0" y="0" width="265" height="88" rx="18" fill="#ffffff" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#0f7a46">The human taps</text>
+    <text x="20" y="66" font-family="Avenir Next, system-ui, sans-serif" font-size="19" fill="#4a4f58">the only thing that grants</text>
+  </g>
+
+  <!-- node: feedback attached -->
+  <g transform="translate(70,378)">
+    <rect x="6" y="6" width="265" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="265" height="88" rx="18" fill="#ffffff" stroke="#17191d" stroke-width="4"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#17191d">Feedback on the call</text>
+    <text x="20" y="66" font-family="JetBrains Mono, ui-monospace, monospace" font-size="17" fill="#4a4f58">human_decision · agreement</text>
+  </g>
+
+  <!-- node: evaluation -->
+  <g transform="translate(428,214)">
+    <rect x="6" y="6" width="190" height="88" rx="18" fill="#17191d"/>
+    <rect x="0" y="0" width="190" height="88" rx="18" fill="#ffffff" stroke="#0f7a46" stroke-width="4" stroke-dasharray="10 8"/>
+    <text x="20" y="36" font-family="Avenir Next, system-ui, sans-serif" font-size="21" font-weight="700" fill="#17191d">Evaluation</text>
+    <text x="20" y="66" font-family="JetBrains Mono, ui-monospace, monospace" font-size="17" fill="#4a4f58">weave.Evaluation</text>
+  </g>
+
+  <!-- captions -->
+  <text x="617" y="450" text-anchor="middle" font-family="Avenir Next, system-ui, sans-serif" font-size="19" fill="#0f7a46" font-weight="700">agreement · false READY · escalation, scored against the people it advised</text>
+  <text x="617" y="492" text-anchor="middle" font-family="Avenir Next, system-ui, sans-serif" font-size="22" font-weight="700" fill="#17191d">The judge is measured, never handed authority.</text>
+</svg>
