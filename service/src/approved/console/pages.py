@@ -3,6 +3,10 @@
 No template engine: the pages are small, and plain functions keep escaping visible at every
 call site. No inline script or style exists anywhere, so the Content-Security-Policy can be
 ``'self'`` only.
+
+Every page loads ``static/session.js`` first and synchronously (it decides, before the body
+renders, whether this tab carries its session in a header; see ``auth.py``), and carries a
+``session-flow`` meta that the app fills in per request.
 """
 
 from __future__ import annotations
@@ -65,8 +69,10 @@ def _shell(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{e(csrf)}">
 <meta name="base-path" content="">
+<meta name="session-flow" content="none">
 <title>{e(title)} · Approved</title>
 <link rel="stylesheet" href="/static/console.css">
+<script src="/static/session.js"></script>
 {script_tags}
 </head>
 <body>
@@ -210,7 +216,8 @@ def live_fragment(view: LiveView, status: dict[str, Any], *, facade_host: str) -
 def live_page(fragment: str, *, csrf: str, demo_note: str | None, authed: bool) -> str:
     body = f"""<div class="page-head"><h1>Live tenant view</h1>
 <p>What the judge has seen on this tenant's log: follow health, open requests with the judge's
-advisory, and how the judge compares with the human's decisions.
+advisory, and how the judge compares with the human's decisions
+(<a href="/metrics">JSON counters</a>).
 <span class="small muted" id="live-updated"></span></p></div>
 <div id="live" data-refresh-ms="3000">{fragment}</div>"""
     return _shell(

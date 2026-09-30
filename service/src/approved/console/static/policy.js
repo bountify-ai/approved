@@ -4,222 +4,235 @@
 // scalar quoting, the build() output shape) is kept; changes: the channel's env names are
 // tenant-prefixed (HOSTED_<TENANT>_TG_BOT_TOKEN / _TG_CHAT), which the hosted daemon image
 // requires, and a "What the judge would say" panel calls POST /api/preview (offline
-// reviewer only).
+// reviewer only). Setup runs through ApprovedSession.onPage (static/session.js), and the
+// preview carries the session header where the console signs in without cookies.
 (function () {
-  var LEVELS = ["human-only", "manual", "supervised-retro", "autonomous"];
-  var SEED = [
-    ["read.*", "autonomous"],
-    ["files.write.workspace", "autonomous"],
-    ["communicate.email.external", "manual"],
-    ["message.send", "manual"],
-    ["spend.*", "manual"],
-    ["files.delete.*", "manual"],
-    ["vcs.push.main", "supervised-retro"],
-    ["vcs.push.branch", "manual"],
-    ["vcs.history.rewrite", "manual"]
-  ];
-  var SAMPLES = {
-    "vcs.push.main": "git push origin main",
-    "vcs.push.branch": "git push origin feat/checkout-retry",
-    "vcs.history.rewrite": "git push --force origin main",
-    "read.shell": "cat README.md",
-    "files.delete.recursive": "rm -rf /data/backups",
-    "deploy.production": "deploy build-4f2a9c of checkout to production",
-    "financial.spend": "pay vendor quote VQ-5512: $24.00",
-    "communicate.email.external": "email vendor-support@example.com the deploy log"
-  };
+  var session = window.ApprovedSession;
+  var onPage = session ? session.onPage : function (fn) { fn(); };
+  onPage(setup);
 
-  var rowsEl = document.getElementById("rows");
-  var outEl = document.getElementById("out");
-  if (!rowsEl || !outEl) return;
+  function setup() {
+    var LEVELS = ["human-only", "manual", "supervised-retro", "autonomous"];
+    var SEED = [
+      ["read.*", "autonomous"],
+      ["files.write.workspace", "autonomous"],
+      ["communicate.email.external", "manual"],
+      ["message.send", "manual"],
+      ["spend.*", "manual"],
+      ["files.delete.*", "manual"],
+      ["vcs.push.main", "supervised-retro"],
+      ["vcs.push.branch", "manual"],
+      ["vcs.history.rewrite", "manual"]
+    ];
+    var SAMPLES = {
+      "vcs.push.main": "git push origin main",
+      "vcs.push.branch": "git push origin feat/checkout-retry",
+      "vcs.history.rewrite": "git push --force origin main",
+      "read.shell": "cat README.md",
+      "files.delete.recursive": "rm -rf /data/backups",
+      "deploy.production": "deploy build-4f2a9c of checkout to production",
+      "financial.spend": "pay vendor quote VQ-5512: $24.00",
+      "communicate.email.external": "email vendor-support@example.com the deploy log"
+    };
 
-  function addRow(name, level) {
-    var tr = document.createElement("tr");
-    var tdName = document.createElement("td");
-    var nameInput = document.createElement("input");
-    nameInput.value = name || "";
-    nameInput.placeholder = "class.pattern";
-    nameInput.setAttribute("aria-label", "Class pattern");
-    tdName.appendChild(nameInput);
+    var rowsEl = document.getElementById("rows");
+    var outEl = document.getElementById("out");
+    if (!rowsEl || !outEl) return;
 
-    var tdLevel = document.createElement("td");
-    var sel = document.createElement("select");
-    sel.setAttribute("aria-label", "Autonomy");
-    LEVELS.forEach(function (value) {
-      var opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = value;
-      if (value === level) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    tdLevel.appendChild(sel);
+    function addRow(name, level) {
+      var tr = document.createElement("tr");
+      var tdName = document.createElement("td");
+      var nameInput = document.createElement("input");
+      nameInput.value = name || "";
+      nameInput.placeholder = "class.pattern";
+      nameInput.setAttribute("aria-label", "Class pattern");
+      tdName.appendChild(nameInput);
 
-    var tdAct = document.createElement("td");
-    tdAct.className = "act";
-    var rm = document.createElement("button");
-    rm.type = "button";
-    rm.textContent = "×";
-    rm.title = "Remove this row";
-    rm.addEventListener("click", function () { tr.remove(); render(); });
-    tdAct.appendChild(rm);
+      var tdLevel = document.createElement("td");
+      var sel = document.createElement("select");
+      sel.setAttribute("aria-label", "Autonomy");
+      LEVELS.forEach(function (value) {
+        var opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = value;
+        if (value === level) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      tdLevel.appendChild(sel);
 
-    tr.appendChild(tdName);
-    tr.appendChild(tdLevel);
-    tr.appendChild(tdAct);
-    rowsEl.appendChild(tr);
-    nameInput.addEventListener("input", render);
-    sel.addEventListener("change", render);
-  }
+      var tdAct = document.createElement("td");
+      tdAct.className = "act";
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = "Remove this row";
+      rm.addEventListener("click", function () { tr.remove(); render(); });
+      tdAct.appendChild(rm);
 
-  function classRows() {
-    var out = [];
-    Array.prototype.forEach.call(rowsEl.querySelectorAll("tr"), function (tr) {
-      var name = tr.querySelector("input").value.trim();
-      if (name) out.push([name, tr.querySelector("select").value]);
-    });
-    return out;
-  }
-
-  // YAML-quote anything that is not a plain scalar, so a class pattern with a colon or an
-  // id with a leading zero survives the round trip.
-  function scalar(value) {
-    return /^[A-Za-z0-9_.*\/-]+$/.test(value) ? value : JSON.stringify(String(value));
-  }
-
-  function envPrefix(tenant) {
-    var slug = (tenant || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    return "HOSTED_" + (slug || "TENANT") + "_";
-  }
-
-  function build(cfg) {
-    var p = envPrefix(cfg.tenant);
-    var lines = [];
-    lines.push("# Approval policy — " + cfg.approver);
-    lines.push("");
-    lines.push("Generated by the Approved policy builder (ported from the approval.md hosted");
-    lines.push("policy builder). The runtime reads the fenced block below; everything outside");
-    lines.push("it is prose for humans.");
-    lines.push("");
-    lines.push("```yaml approval-policy");
-    lines.push('version: "0.1"');
-    lines.push("");
-    lines.push("defaults:");
-    lines.push("  autonomy: " + cfg.defaultAutonomy);
-    lines.push("  channel: telegram");
-    lines.push("  approval_ttl: " + scalar(cfg.ttl));
-    lines.push("  on_expiry: reject");
-    lines.push("  token_delivery: sealed");
-    lines.push("");
-    lines.push("approvers:");
-    lines.push("  " + scalar(cfg.approver) + ":");
-    lines.push("    channels: [telegram, cli]");
-    if (cfg.sender) {
-      lines.push("    senders:");
-      lines.push('      telegram: "' + String(cfg.sender).replace(/"/g, "") + '"');
+      tr.appendChild(tdName);
+      tr.appendChild(tdLevel);
+      tr.appendChild(tdAct);
+      rowsEl.appendChild(tr);
+      nameInput.addEventListener("input", render);
+      sel.addEventListener("change", render);
     }
-    lines.push("");
-    lines.push("classes:");
-    if (cfg.classes.length === 0) {
-      lines.push("  read.*: { autonomy: autonomous }");
-    } else {
-      cfg.classes.forEach(function (row) {
-        lines.push("  " + scalar(row[0]) + ": { autonomy: " + row[1] + " }");
+
+    function classRows() {
+      var out = [];
+      Array.prototype.forEach.call(rowsEl.querySelectorAll("tr"), function (tr) {
+        var name = tr.querySelector("input").value.trim();
+        if (name) out.push([name, tr.querySelector("select").value]);
+      });
+      return out;
+    }
+
+    // YAML-quote anything that is not a plain scalar, so a class pattern with a colon or an
+    // id with a leading zero survives the round trip.
+    function scalar(value) {
+      return /^[A-Za-z0-9_.*\/-]+$/.test(value) ? value : JSON.stringify(String(value));
+    }
+
+    function envPrefix(tenant) {
+      var slug = (tenant || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      return "HOSTED_" + (slug || "TENANT") + "_";
+    }
+
+    function build(cfg) {
+      var p = envPrefix(cfg.tenant);
+      var lines = [];
+      lines.push("# Approval policy — " + cfg.approver);
+      lines.push("");
+      lines.push("Generated by the Approved policy builder (ported from the approval.md hosted");
+      lines.push("policy builder). The runtime reads the fenced block below; everything outside");
+      lines.push("it is prose for humans.");
+      lines.push("");
+      lines.push("```yaml approval-policy");
+      lines.push('version: "0.1"');
+      lines.push("");
+      lines.push("defaults:");
+      lines.push("  autonomy: " + cfg.defaultAutonomy);
+      lines.push("  channel: telegram");
+      lines.push("  approval_ttl: " + scalar(cfg.ttl));
+      lines.push("  on_expiry: reject");
+      lines.push("  token_delivery: sealed");
+      lines.push("");
+      lines.push("approvers:");
+      lines.push("  " + scalar(cfg.approver) + ":");
+      lines.push("    channels: [telegram, cli]");
+      if (cfg.sender) {
+        lines.push("    senders:");
+        lines.push('      telegram: "' + String(cfg.sender).replace(/"/g, "") + '"');
+      }
+      lines.push("");
+      lines.push("classes:");
+      if (cfg.classes.length === 0) {
+        lines.push("  read.*: { autonomy: autonomous }");
+      } else {
+        cfg.classes.forEach(function (row) {
+          lines.push("  " + scalar(row[0]) + ": { autonomy: " + row[1] + " }");
+        });
+      }
+      lines.push("");
+      lines.push("channels:");
+      lines.push("  telegram:");
+      lines.push("    token_env: " + p + "TG_BOT_TOKEN");
+      lines.push("    chat_id_env: " + p + "TG_CHAT");
+      lines.push("");
+      lines.push("vault:");
+      lines.push("  passphrase_env: " + p + "VAULT_PASSPHRASE");
+      lines.push("```");
+      lines.push("");
+      return lines.join("\n");
+    }
+
+    function current() {
+      return {
+        tenant: document.getElementById("tenant").value.trim(),
+        approver: document.getElementById("approver").value.trim() || "operator",
+        sender: document.getElementById("sender").value.trim(),
+        defaultAutonomy: document.getElementById("defaultAutonomy").value,
+        ttl: document.getElementById("ttl").value.trim() || "2h",
+        classes: classRows()
+      };
+    }
+
+    function render() {
+      outEl.textContent = build(current());
+      refreshClassPicker();
+    }
+
+    // ---------------------------------------------------------------- judge preview
+    var pick = document.getElementById("preview-class");
+    var cmd = document.getElementById("preview-command");
+    var result = document.getElementById("preview-result");
+
+    function refreshClassPicker() {
+      if (!pick) return;
+      var chosen = pick.value;
+      var names = {};
+      Object.keys(SAMPLES).forEach(function (k) { names[k] = true; });
+      classRows().forEach(function (row) { if (row[0].indexOf("*") === -1) names[row[0]] = true; });
+      var sorted = Object.keys(names).sort();
+      pick.textContent = "";
+      sorted.forEach(function (name) {
+        var opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        pick.appendChild(opt);
+      });
+      pick.value = names[chosen] ? chosen : "vcs.push.main";
+    }
+
+    if (pick && cmd && result) {
+      pick.addEventListener("change", function () {
+        if (SAMPLES[pick.value]) cmd.value = SAMPLES[pick.value];
+      });
+      document.getElementById("preview-run").addEventListener("click", function () {
+        var csrf = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+        var base = (document.querySelector('meta[name="base-path"]') || {}).content || "";
+        var headers = { "content-type": "application/json", "x-csrf-token": csrf };
+        fetch(base + "/api/preview", {
+          method: "POST",
+          credentials: "same-origin",
+          redirect: "error", // never replay the session header along a redirect
+          headers: session ? session.headers(headers) : headers,
+          body: JSON.stringify({ action_class: pick.value, command: cmd.value })
+        })
+          .then(function (r) {
+            if (r.status === 401 && session) { session.expired(); return null; }
+            return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+          })
+          .then(function (res) {
+            if (res === null) return;
+            result.hidden = false;
+            if (!res.ok) { result.textContent = "Preview refused: " + (res.body.detail || "error"); return; }
+            var b = res.body;
+            result.textContent =
+              "\u{1F9D1}\u200D\u2696\uFE0F Judge (advisory AI, not an approval): " + b.decision + ", " + b.reason.replace(/\.$/, "") + ".\n" +
+              "Request class: " + b.action_class + "\n\n" +
+              "reviewer: " + b.reviewer + " (offline rules; the live judge uses W&B Inference)";
+          })
+          .catch(function () { result.hidden = false; result.textContent = "Preview unavailable."; });
       });
     }
-    lines.push("");
-    lines.push("channels:");
-    lines.push("  telegram:");
-    lines.push("    token_env: " + p + "TG_BOT_TOKEN");
-    lines.push("    chat_id_env: " + p + "TG_CHAT");
-    lines.push("");
-    lines.push("vault:");
-    lines.push("  passphrase_env: " + p + "VAULT_PASSPHRASE");
-    lines.push("```");
-    lines.push("");
-    return lines.join("\n");
-  }
 
-  function current() {
-    return {
-      tenant: document.getElementById("tenant").value.trim(),
-      approver: document.getElementById("approver").value.trim() || "operator",
-      sender: document.getElementById("sender").value.trim(),
-      defaultAutonomy: document.getElementById("defaultAutonomy").value,
-      ttl: document.getElementById("ttl").value.trim() || "2h",
-      classes: classRows()
-    };
-  }
-
-  function render() {
-    outEl.textContent = build(current());
-    refreshClassPicker();
-  }
-
-  // ---------------------------------------------------------------- judge preview
-  var pick = document.getElementById("preview-class");
-  var cmd = document.getElementById("preview-command");
-  var result = document.getElementById("preview-result");
-
-  function refreshClassPicker() {
-    if (!pick) return;
-    var chosen = pick.value;
-    var names = {};
-    Object.keys(SAMPLES).forEach(function (k) { names[k] = true; });
-    classRows().forEach(function (row) { if (row[0].indexOf("*") === -1) names[row[0]] = true; });
-    var sorted = Object.keys(names).sort();
-    pick.textContent = "";
-    sorted.forEach(function (name) {
-      var opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      pick.appendChild(opt);
+    document.getElementById("add").addEventListener("click", function () { addRow("", "manual"); render(); });
+    document.getElementById("download").addEventListener("click", function () {
+      var blob = new Blob([outEl.textContent], { type: "text/markdown" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "APPROVAL.md";
+      a.click();
+      URL.revokeObjectURL(a.href);
     });
-    pick.value = names[chosen] ? chosen : "vcs.push.main";
-  }
-
-  if (pick && cmd && result) {
-    pick.addEventListener("change", function () {
-      if (SAMPLES[pick.value]) cmd.value = SAMPLES[pick.value];
+    ["tenant", "approver", "sender", "defaultAutonomy", "ttl"].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.addEventListener("input", render);
+      el.addEventListener("change", render);
     });
-    document.getElementById("preview-run").addEventListener("click", function () {
-      var csrf = document.querySelector('meta[name="csrf-token"]').getAttribute("content");
-      var base = (document.querySelector('meta[name="base-path"]') || {}).content || "";
-      fetch(base + "/api/preview", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ action_class: pick.value, command: cmd.value })
-      })
-        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-        .then(function (res) {
-          result.hidden = false;
-          if (!res.ok) { result.textContent = "Preview refused: " + (res.body.detail || "error"); return; }
-          var b = res.body;
-          result.textContent =
-            "\u{1F9D1}\u200D\u2696\uFE0F Judge (advisory AI, not an approval): " + b.decision + ", " + b.reason.replace(/\.$/, "") + ".\n" +
-            "Request class: " + b.action_class + "\n\n" +
-            "reviewer: " + b.reviewer + " (offline rules; the live judge uses W&B Inference)";
-        })
-        .catch(function () { result.hidden = false; result.textContent = "Preview unavailable."; });
-    });
+
+    SEED.forEach(function (row) { addRow(row[0], row[1]); });
+    render();
+    if (cmd && pick) cmd.value = SAMPLES[pick.value] || "";
   }
-
-  document.getElementById("add").addEventListener("click", function () { addRow("", "manual"); render(); });
-  document.getElementById("download").addEventListener("click", function () {
-    var blob = new Blob([outEl.textContent], { type: "text/markdown" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "APPROVAL.md";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
-  ["tenant", "approver", "sender", "defaultAutonomy", "ttl"].forEach(function (id) {
-    var el = document.getElementById(id);
-    el.addEventListener("input", render);
-    el.addEventListener("change", render);
-  });
-
-  SEED.forEach(function (row) { addRow(row[0], row[1]); });
-  render();
-  if (cmd && pick) cmd.value = SAMPLES[pick.value] || "";
 })();

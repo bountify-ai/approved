@@ -141,3 +141,6 @@ ul.notes li { margin: 4px 0; }
 /* ---------- login */
 .login { max-width: 380px; margin: 40px auto; }
 input[type="radio"] { width: auto; padding: 0; border: 0; background: none; box-shadow: none; accent-color: var(--green); }
+
+/* static/session.js hides a page it is about to replace with the signed-in one. */
+html.approved-pending body { visibility: hidden; }

@@ -87,23 +87,37 @@ maritime --json stop approved-judge && maritime --json start approved-judge
 1. **Health.** `curl -s https://api.maritime.sh/a/<judge-id>/health` answers
    `{"status":"ok","worker":{"running":true,"chain":"verified"}}`. A `503` with
    `"status":"degraded"` names the reason (for example `chain-break`).
-2. **Console.** Not reachable through Maritime's public URL (see "Shared origin, and no
-   cookies" below). On its own domain, `/` redirects to `/login`; sign in with the console
-   token and the live view shows the follow as `ok`.
+2. **Console.** `https://api.maritime.sh/a/<judge-id>/` redirects to `/a/<judge-id>/login`;
+   sign in with the console token and the live view shows the follow as `ok`. Maritime's proxy
+   drops the `Cookie` request header, so the console's script keeps the session in the tab's
+   `sessionStorage` and sends it in the `X-Approved-Session` header instead. Consequences: the
+   console needs JavaScript there (a plain form post answers "Session expired; try again."),
+   each new tab signs in again, and page URLs carry a page name after `#` (for example
+   `#/connect`), never a credential.
 3. **A live advisory.** Trigger a gated request (for example
    `approved ask <tenant>-hermes "push the README fix to main"`; for a protected machine such as
    dogfood's, name it exactly: `approved ask --allow-target approval-hermes-gated
    approval-hermes-gated "..."`). The approver's chat gets the
    gate's prompt and, from the judge bot, a message starting "Judge (advisory AI, not an
-   approval)" with a `Trace:` link.
+   approval)" with a `Trace:` link. Weave is initialised when the worker starts; the review
+   itself can still take tens of seconds with a reasoning model on W&B Inference (the first
+   live call outlived the old 25 s default). The reviewer's deadline, `JUDGE_TIMEOUT_S`,
+   defaults to 60 s (at most 300 s; a larger value is refused at start); a call that outlives it sends no message and is shown as
+   `silent: timeout` in the console. Raise it if a slow model is often silent, knowing that a
+   review holds the judge's follow while it runs (see
+   [RESILIENCE.md](../RESILIENCE.md#the-judge-reads-between-hook-calls)).
 4. **A Weave trace.** The link opens an `approved.judge` call in
    <https://wandb.ai/bountify/judgy>. After the approver taps, the call gains
    `approved.human_decision` and `approved.agreement` feedback.
 
-**Shared origin, and no cookies.** `api.maritime.sh/a/<id>` is shared with every public agent
-on Maritime, and its proxy drops the `Cookie` header, so the console's sign-in cannot work
-through the public URL (every attempt answers "Session expired"). Only `/health` is usable
-there. Put the console on its own domain, or set `CONSOLE_ENABLED=0`.
+**Shared origin.** `api.maritime.sh/a/<id>` is shared with every public agent on Maritime, and
+a page from any other agent there is same-origin with the console. It can use a live session
+(it can read the one the console keeps in the tab's `sessionStorage` and send the session
+header), and it can capture the console token itself as you type it, so signing out and the
+12-hour expiry do not end its access. If you suspect that, rotate `CONSOLE_TOKEN` (import a
+new one and restart the judge). Use the console there for demos only; in production put it
+on its own domain or set `CONSOLE_ENABLED=0` (only `/health` is served). See
+[SECURITY.md](../SECURITY.md#known-gaps).
 
 **Keep the judge awake.** Maritime sleeps an idle machine after 900 seconds, and the judge's
 outbound polling does not count as activity. A sleeping judge posts nothing. Use the always-on

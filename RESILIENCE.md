@@ -23,7 +23,7 @@ to a delay, a retry in the approver's path, or a placeholder.
 
 | failure | behaviour | proved by |
 |---|---|---|
-| Reviewer slower than `JUDGE_TIMEOUT_S` (25 s) | abandoned; no message; `judge.absent.timeout` | `test_timeout_is_absence_and_does_not_raise` |
+| Reviewer slower than `JUDGE_TIMEOUT_S` (60 s) | abandoned; no message; `judge.absent.timeout` | `test_timeout_is_absence_and_does_not_raise` |
 | Unparseable model reply | no message; `judge.absent.parse` | `test_reviewer_failures_become_absence` |
 | Inference error (transport, HTTP, empty or truncated reply after one re-ask) | no message; `judge.absent.inference` | `test_live_reviewer_second_truncation_is_an_inference_error` |
 | Repeated failures | circuit breaker opens after 3 consecutive failures, skips the reviewer for 60 s, then admits one trial call | `test_breaker_half_opens_after_cooldown_and_recovers`, `test_half_open_failure_reopens_immediately` |
@@ -35,7 +35,7 @@ to a delay, a retry in the approver's path, or a placeholder.
 | A record's links hold but its content does not recompute (or cannot be encoded) | not terminal: the record is marked `record-unverifiable`, never judged, counted and shown in the console; the judge follows past it | `test_content_failures_are_not_terminal`, `test_an_unverifiable_record_is_skipped_surfaced_and_followed_past` |
 | The worker thread ends on its own under `serve` (chain break, or an uncaught error) | `/health` answers 503 `{"status": "degraded", "reason": ...}`; about 3 s later the process exits non-zero (3 for a chain break, 1 otherwise) so the platform restarts it; a chain break stays terminal across restarts through state | `test_chain_break_degrades_and_shuts_down`, `test_a_crashed_worker_degrades_with_a_nonzero_exit`, `test_health_answers_503_when_degraded` |
 | Crash mid-review | the action key was claimed before the reviewer ran, so the restart does not judge it again (at most once) | `test_crash_after_claim_never_rejudges` |
-| SIGTERM | the in-flight judgement finishes, state is saved, the loop exits 0 | `test_graceful_stop_finishes_the_inflight_judgement` |
+| SIGTERM | the in-flight judgement finishes, state is saved, the loop exits 0; `serve` waits for it up to `JUDGE_TIMEOUT_S` + `HTTP_TIMEOUT_S` + 10 s (90 s by default), the reviewer deadline plus the advisory's send. A platform that kills the process sooner cuts it short (see [Maritime `stop`](#maritime-stop-does-not-flush)) | `test_graceful_stop_finishes_the_inflight_judgement`, `test_the_worker_join_outlasts_an_inflight_judgement` |
 | Corrupt state file, or state from another facade | refuses to start (exit 4) rather than re-judge | `test_corrupt_state_refuses_to_load`, `test_state_for_another_facade_refuses` |
 
 ### The judge reads between hook calls
@@ -47,6 +47,16 @@ decides inside that first wait decides before the judge has read the request; th
 records `absent:already-decided` (visible in the console, never assent) instead of posting a
 late advisory. The demo's smoke taps after the advisory appears, as an approver reading it
 would.
+
+A slow review holds the follow. The worker judges one request at a time inside the follow
+loop, and a review may take up to `JUDGE_TIMEOUT_S` (60 s). While it runs the judge reads
+nothing new: a request behind it waits, and several requests in one page are reviewed one
+after another. The judge skips only a request whose decision it has already read, so a human
+who decides while the review is in flight decides without the advisory, and the advisory
+then arrives after the decision (still marked advisory; nothing reads it and it grants
+nothing). Three timeouts in a row, up to three minutes of held follow, open the breaker,
+which skips the reviewer for 60 s. A lower `JUDGE_TIMEOUT_S` trades late advisories for
+absent ones.
 
 ### Chain break and restarts
 
