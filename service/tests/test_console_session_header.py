@@ -453,7 +453,7 @@ def _clocked(tmp_path: Path, now: list[float], token: str = CONSOLE_TOKEN) -> Ma
     return MaritimeProxy(create_app(ctx))
 
 
-def test_expired_replayed_revoked_and_rotated_header_sessions_are_refused(
+def test_expired_retimestamped_revoked_and_rotated_header_sessions_are_refused(
     tmp_path: Path,
 ) -> None:
     now = [1_000_000.0]
@@ -467,8 +467,8 @@ def test_expired_replayed_revoked_and_rotated_header_sessions_are_refused(
         assert c.get(f"{PREFIX}/metrics", headers={SESSION: session}).status_code == 200
         now[0] += 10
         assert c.get(f"{PREFIX}/metrics", headers={SESSION: session}).status_code == 401
-        replayed = f"{int(now[0])}.{mac}"  # the old MAC under a fresh timestamp
-        assert c.get(f"{PREFIX}/metrics", headers={SESSION: replayed}).status_code == 401
+        retimestamped = f"{int(now[0])}.{mac}"  # the old MAC under a fresh timestamp
+        assert c.get(f"{PREFIX}/metrics", headers={SESSION: retimestamped}).status_code == 401
 
         fresh = _sign_in(c)
         other = _sign_in(c)

@@ -111,10 +111,12 @@ maritime --json stop approved-judge && maritime --json start approved-judge
    `approved.human_decision` and `approved.agreement` feedback.
 
 **Shared origin.** `api.maritime.sh/a/<id>` is shared with every public agent on Maritime, and
-any page on it is same-origin with the console: another agent's page opened in the same tab
-can read the session the console keeps in `sessionStorage` and send the session header. Use
-the console there for demos; in production put it on its own domain or set
-`CONSOLE_ENABLED=0` (only `/health` is served). See
+a page from any other agent there is same-origin with the console. It can use a live session
+(it can read the one the console keeps in the tab's `sessionStorage` and send the session
+header), and it can capture the console token itself as you type it, so signing out and the
+12-hour expiry do not end its access. If you suspect that, rotate `CONSOLE_TOKEN` (import a
+new one and restart the judge). Use the console there for demos only; in production put it
+on its own domain or set `CONSOLE_ENABLED=0` (only `/health` is served). See
 [SECURITY.md](../SECURITY.md#known-gaps).
 
 **Keep the judge awake.** Maritime sleeps an idle machine after 900 seconds, and the judge's
