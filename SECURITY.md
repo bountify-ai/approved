@@ -56,6 +56,10 @@ The console and the CLI add:
 | No configured secret appears in any console response body or header (offline and live mode) | `test_no_configured_secret_appears_in_any_response` |
 | The public judge preview never reaches the live reviewer | `test_preview_runs_the_offline_reviewer_only` |
 | Console auth: redirects, 401s, wrong token, missing CSRF, forged cookie | `test_auth_gate`, `test_login_rejects_wrong_token_and_missing_csrf`, `test_forged_session_cookie_is_refused` |
+| Sign-in and every console page work with the Cookie request header dropped (Maritime's proxy), through the session header | `test_every_page_and_post_works_without_the_cookie_header`, `test_session_script_under_node` |
+| Header sessions: forged, expired, replayed, revoked and rotated values are refused, a request without one gets no page content, and a header is never overridden by a cookie | `test_unauthenticated_requests_get_no_page_content`, `test_expired_replayed_revoked_and_rotated_header_sessions_are_refused`, `test_auth_judges_a_header_request_by_the_header_alone` |
+| Header-flow CSRF: the custom header plus a token bound to the session by HMAC; no CORS allow header on any response | `test_state_changing_requests_need_the_header_and_this_sessions_csrf`, `test_no_cors_allow_header_on_any_response` |
+| The session value and the console token never appear in a URL, a log line or any response other than the sign-in answer | `test_no_secret_or_session_value_in_urls_logs_or_other_responses` |
 | Untrusted state text is escaped; a `javascript:` trace link is dropped | `test_untrusted_text_is_escaped_and_bad_links_dropped` |
 | No credential on any `maritime` argv, stdin or printed line | `test_no_token_value_on_any_argv_stdin_or_output`, `test_secret_guard_blocks_before_spawning` |
 | Credential files are 0600 in a 0700 directory | `test_credential_files_are_0600_in_a_0700_dir` |
@@ -85,9 +89,28 @@ The console and the CLI add:
   sign-ins and the public POST routes are rate-limited per client; a sign-in with the valid
   token is never limited, so a flood cannot lock the operator out. The client is the socket
   peer, or with `TRUSTED_PROXY_HOPS=1` (set for Maritime) the rightmost `X-Forwarded-For` hop.
+- **Console without cookies.** Maritime's public proxy drops the `Cookie` (and
+  `Authorization`) request header, so the cookie never reaches the console there. The
+  console's own script (`static/session.js`, served from `/static` under the same CSP) signs
+  in with a `fetch` marked `X-Approved-Login`. When the CSRF cookie did not arrive with it,
+  the server answers with the same timestamped, HMAC'd session value in the JSON body instead
+  of a cookie (12-hour lifetime, revoke-all and token rotation apply unchanged). The script
+  keeps it in the tab's `sessionStorage` (never `localStorage`) and sends it as
+  `X-Approved-Session` on its own requests; it never goes into a URL, a log line or a page.
+  A request carrying that header is judged by the header alone: when the value does not
+  verify, every route except `/health`, `/login`, `/static` and `/downloads` answers 401 JSON,
+  with no page content and no fallback to a cookie. State-changing requests in this flow need
+  the custom header (a cross-origin page can send it only after a CORS preflight, which the
+  console never answers) and a CSRF token equal to `HMAC(console token, session)`, so a token
+  from another session or a cookie never matches. Where the CSRF cookie does arrive (own
+  domain, local demo), the same sign-in gets the cookie flow and its double-submit check, and
+  a form post without the script behaves exactly as before. The token itself is sent once, in
+  the sign-in POST body.
 - **Shared origin.** A console at `https://api.maritime.sh/a/<id>` shares its origin with every
   other public agent on Maritime, and any page on that origin is same-origin with the console:
-  the cookie `Path` and `SameSite` do not separate them. **Expose the console on a shared origin
+  the cookie `Path` and `SameSite` do not separate them, and neither does the header flow
+  (another agent's page loaded in the same tab can read the tab's `sessionStorage` and send
+  `X-Approved-Session`). **Expose the console on a shared origin
   only for demos; in production put it on its own domain, or run the judge with
   `CONSOLE_ENABLED=0`** (only `/health` is served then). Sensitive pages are sent
   `Cache-Control: no-store`. Strict
@@ -167,12 +190,19 @@ and core runs an unattested policy manual-only, so the window fails safe.
   machine's environment as readable by the agent.
 - **Channel-secret isolation on Maritime is unverified** (case 1): the experiment ran without
   a channel credential.
+- **The console on Maritime's shared origin is for demos.** Every public agent is served from
+  `https://api.maritime.sh`, so another agent's page is same-origin with the console. Loaded in
+  the same tab, it can read the session value the console keeps in `sessionStorage` and send
+  requests with `X-Approved-Session` and the page's CSRF token, exactly as the console's own
+  script does; in the cookie flow it could send requests with the cookie. The session lasts
+  at most 12 hours and signing out revokes every session, but neither stops a same-origin page
+  while the session is live. In production, give the console its own domain or run the judge
+  with `CONSOLE_ENABLED=0`.
+- **The console's script is verified below a browser.** `test_session_script_under_node` runs
+  `session.js` and `console.js` against a stub DOM in Node. Rendering the swapped page, the
+  real CSP, real redirects with a URL fragment, and `sessionStorage` in a real browser are
+  checked by hand, not by CI.
 - **Durability under `maritime stop`**: see [RESILIENCE.md](RESILIENCE.md).
-- **The console cannot sign in through Maritime's public URL.** Maritime's public proxy drops
-  the `Cookie` request header, as it drops `Authorization`, so the console's CSRF and session
-  cookies never reach it and every sign-in answers "Session expired" (seen 2026-09-29).
-  `/health` is unaffected. On Maritime the console is reachable only from inside the machine
-  (`maritime exec`). Put the console on its own domain, or set `CONSOLE_ENABLED=0`.
 - **The judge sleeps with its machine.** Maritime auto-sleeps a machine after 900 idle
   seconds, and the judge's own outbound polling does not count as activity. A sleeping judge
   sees no request, so advisories are absent until something wakes it (seen 2026-09-29). The

@@ -87,9 +87,13 @@ maritime --json stop approved-judge && maritime --json start approved-judge
 1. **Health.** `curl -s https://api.maritime.sh/a/<judge-id>/health` answers
    `{"status":"ok","worker":{"running":true,"chain":"verified"}}`. A `503` with
    `"status":"degraded"` names the reason (for example `chain-break`).
-2. **Console.** Not reachable through Maritime's public URL (see "Shared origin, and no
-   cookies" below). On its own domain, `/` redirects to `/login`; sign in with the console
-   token and the live view shows the follow as `ok`.
+2. **Console.** `https://api.maritime.sh/a/<judge-id>/` redirects to `/a/<judge-id>/login`;
+   sign in with the console token and the live view shows the follow as `ok`. Maritime's proxy
+   drops the `Cookie` request header, so the console's script keeps the session in the tab's
+   `sessionStorage` and sends it in the `X-Approved-Session` header instead. Consequences: the
+   console needs JavaScript there (a plain form post answers "Session expired; try again."),
+   each new tab signs in again, and page URLs carry a page name after `#` (for example
+   `#/connect`), never a credential.
 3. **A live advisory.** Trigger a gated request (for example
    `approved ask <tenant>-hermes "push the README fix to main"`; for a protected machine such as
    dogfood's, name it exactly: `approved ask --allow-target approval-hermes-gated
@@ -100,10 +104,12 @@ maritime --json stop approved-judge && maritime --json start approved-judge
    <https://wandb.ai/bountify/judgy>. After the approver taps, the call gains
    `approved.human_decision` and `approved.agreement` feedback.
 
-**Shared origin, and no cookies.** `api.maritime.sh/a/<id>` is shared with every public agent
-on Maritime, and its proxy drops the `Cookie` header, so the console's sign-in cannot work
-through the public URL (every attempt answers "Session expired"). Only `/health` is usable
-there. Put the console on its own domain, or set `CONSOLE_ENABLED=0`.
+**Shared origin.** `api.maritime.sh/a/<id>` is shared with every public agent on Maritime, and
+any page on it is same-origin with the console: another agent's page opened in the same tab
+can read the session the console keeps in `sessionStorage` and send the session header. Use
+the console there for demos; in production put it on its own domain or set
+`CONSOLE_ENABLED=0` (only `/health` is served). See
+[SECURITY.md](../SECURITY.md#known-gaps).
 
 **Keep the judge awake.** Maritime sleeps an idle machine after 900 seconds, and the judge's
 outbound polling does not count as activity. A sleeping judge posts nothing. Use the always-on

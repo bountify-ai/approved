@@ -9,7 +9,8 @@ path                  auth    what
 ``/policy``           public  the policy builder and the offline judge preview
 ``/api/preview``      public  offline reviewer only (CSRF header required)
 ``/downloads/...``    public  the vendored Hermes hook shim (no secrets in it)
-``/login``            public  sign in with the operator token
+``/login``            public  sign in with the operator token (JSON for session.js)
+``/logout``           csrf    revoke every session (header flow: its session too)
 ``/``                 token   the live tenant view
 ``/partials/live``    token   the live view's fragment, polled by the page
 ``/connect``          token   the connect bundle
@@ -18,6 +19,12 @@ path                  auth    what
 
 It reads the judge's state file and the worker's in-process follow status only: no page
 view calls the facade. No CORS middleware is installed, so browsers apply same-origin.
+
+Two ways to carry the session (see ``auth.py``): the ``approved_console`` cookie, or, where a
+proxy drops the Cookie request header (Maritime's public proxy does), the same value in
+``X-Approved-Session``, attached by ``static/session.js``. A request presenting a header
+session that does not verify gets 401 JSON on every route except ``/health``, ``/login``,
+``/static`` and ``/downloads``: never page content, and never a fallback to the cookie.
 """
 
 from __future__ import annotations
@@ -40,7 +47,14 @@ from starlette.responses import Response
 from ..config import Settings
 from ..logs import METRICS
 from ..reviewer import JudgeRequest, OfflineReviewer
-from .auth import CSRF_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE_S, ConsoleAuth, SessionEpoch
+from .auth import (
+    CSRF_COOKIE,
+    LOGIN_HEADER,
+    SESSION_COOKIE,
+    SESSION_MAX_AGE_S,
+    ConsoleAuth,
+    SessionEpoch,
+)
 from .bundle import BundleError, build_bundle
 from .limits import RateLimiter, RequestGuard, client_ip
 from .live import load_view
@@ -59,6 +73,11 @@ SECURITY_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
 }
 MAX_FORM_BYTES = 8 * 1024
+#: Routes a request with a dead header session may still reach: the platform's liveness, the
+#: sign-in itself, and the public assets. Everything else answers 401.
+_HEADER_SESSION_EXEMPT = ("/health", "/login")
+_HEADER_SESSION_EXEMPT_PREFIXES = ("/static/", "/downloads/")
+_FLOW_META = '<meta name="session-flow" content="none">'
 
 
 @dataclass(frozen=True)
@@ -111,6 +130,27 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         return response
 
 
+class _HeaderSessionGate(BaseHTTPMiddleware):
+    """A request that presents ``X-Approved-Session`` is judged by that header alone: when it
+    does not verify (forged, expired, revoked, rotated token), the answer is 401 JSON before
+    any handler runs, so no page content and no cookie fallback."""
+
+    def __init__(self, app: Any, auth: ConsoleAuth) -> None:
+        super().__init__(app)
+        self.auth = auth
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        path = request.url.path
+        exempt = path in _HEADER_SESSION_EXEMPT or path.startswith(_HEADER_SESSION_EXEMPT_PREFIXES)
+        if (
+            not exempt
+            and self.auth.header_flow(request)
+            and self.auth.header_session(request) is None
+        ):
+            return JSONResponse({"detail": "session expired; sign in again"}, status_code=401)
+        return await call_next(request)
+
+
 _OWN_LINK = re.compile(r'((?:href|src|action)=")/(?!/)')
 
 
@@ -145,6 +185,9 @@ def create_app(
     ctx: ConsoleContext, *, rate_limiter: RateLimiter | None = None, console: bool = True
 ) -> FastAPI:
     app = FastAPI(title="Approved console", docs_url=None, redoc_url=None, openapi_url=None)
+    if console:
+        # Innermost, so its 401s still get the security headers and the body/rate guard.
+        app.add_middleware(_HeaderSessionGate, auth=ctx.auth)
     app.add_middleware(_SecurityHeaders)
     limiter = rate_limiter or RateLimiter()
     app.add_middleware(RequestGuard, rate=limiter, trusted_proxy_hops=ctx.trusted_proxy_hops)
@@ -157,7 +200,8 @@ def create_app(
         return RedirectResponse(base + path, status_code=303)
 
     def html(request: Request, content: str, csrf: tuple[str, bool], status: int = 200):
-        response = HTMLResponse(rebase(content, base), status_code=status)
+        flow = f'<meta name="session-flow" content="{ctx.auth.flow(request)}">'
+        response = HTMLResponse(rebase(content.replace(_FLOW_META, flow), base), status_code=status)
         token, fresh = csrf
         if fresh:
             response.set_cookie(
@@ -245,19 +289,33 @@ def create_app(
     @app.post("/login", response_class=HTMLResponse)
     async def login(request: Request) -> Response:
         form = await _form(request)
+        # ``X-Approved-Login``: the console's own script signed in, and reads JSON back. A
+        # cross-origin page cannot send the header (no CORS preflight is ever answered).
+        scripted = LOGIN_HEADER in request.headers
+        # The header flow is taken only when the CSRF cookie did not arrive (a proxy dropped
+        # the Cookie header). When it did, the cookie flow's double-submit check applies.
+        header_flow = scripted and ctx.auth.enabled and CSRF_COOKIE not in request.cookies
         csrf = ctx.auth.csrf_for(request)
-        if not ctx.auth.csrf_ok(request, form.get("csrf")):
-            page = login_page(csrf=csrf[0], error="Session expired; try again.", demo_note=None)
-            return html(request, page, csrf, status=403)
+
+        def refuse(status: int, error: str) -> Response:
+            if scripted:
+                return JSONResponse({"detail": error}, status_code=status)
+            page = login_page(csrf=csrf[0], error=error, demo_note=None)
+            return html(request, page, csrf, status=status)
+
+        if not header_flow and not ctx.auth.cookie_csrf_ok(request, form.get("csrf")):
+            return refuse(403, "Session expired; try again.")
         if not ctx.auth.check_token(form.get("token", "").strip()):
             METRICS.incr("console.login_failed")
             # Only FAILED sign-ins count toward the limit; the valid token always gets in.
             if not limiter.allow(client_ip(request.scope, ctx.trusted_proxy_hops)):
-                page = login_page(csrf=csrf[0], error="Too many failed attempts.", demo_note=None)
-                return html(request, page, csrf, status=429)
-            page = login_page(csrf=csrf[0], error="That token is not right.", demo_note=None)
-            return html(request, page, csrf, status=401)
-        response = redirect("/")
+                return refuse(429, "Too many failed attempts.")
+            return refuse(401, "That token is not right.")
+        if header_flow:
+            # The session value, once, in the body of the answer to the POST that carried the
+            # token. The script keeps it in this tab's sessionStorage. No cookie is set.
+            return JSONResponse({"flow": "header", "session": ctx.auth.session_cookie()})
+        response = JSONResponse({"flow": "cookie"}) if scripted else redirect("/")
         response.set_cookie(
             SESSION_COOKIE,
             ctx.auth.session_cookie(),
@@ -271,7 +329,10 @@ def create_app(
         form = await _form(request)
         if not ctx.auth.csrf_ok(request, form.get("csrf")):
             raise HTTPException(status_code=403, detail="missing or stale CSRF token")
+        header_flow = ctx.auth.header_flow(request)
         ctx.auth.revoke_all()
+        if header_flow:
+            return JSONResponse({"detail": "signed out"})
         response = redirect("/login" if ctx.auth.enabled else "/")
         options = ctx.auth.cookie_options()
         response.delete_cookie(

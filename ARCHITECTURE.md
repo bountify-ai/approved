@@ -28,8 +28,10 @@ moves, why the judge is advisory, and how state and idempotency work.
    no buttons.
 4. **Model output → human.** Reviewer text is untrusted: collapsed to one line, capped at 300
    characters, redacted of token-shaped strings, and HTML-escaped before Telegram.
-5. **Operator → console.** One shared console token; the session cookie is a timestamped HMAC
-   of it (12-hour server-side lifetime, invalidated when the token rotates).
+5. **Operator → console.** One shared console token; the session is a timestamped HMAC of it
+   (12-hour server-side lifetime, invalidated when the token rotates), carried in a cookie or,
+   behind a proxy that drops the Cookie header (Maritime's), in the `X-Approved-Session`
+   header from the tab's `sessionStorage` (see [SECURITY.md](SECURITY.md#secret-handling)).
    `/policy` and `/health` are public; the policy page's judge preview runs the offline rules
    only, so an unauthenticated page can never spend a model call.
 
@@ -39,7 +41,7 @@ moves, why the judge is advisory, and how state and idempotency work.
 |---|---|---|---|
 | Agent (`APPROVAL_SERVE_AGENT_TOKEN`) | daemon (to check it), the agent's hook | `/hook/hermes`, the agent verb subset | the judge (it refuses to start if one is in its environment) |
 | Tenant (`APPROVAL_SERVE_TENANT_TOKEN`) | daemon (to check it), the judge, operator tools | `/log/follow`, `/export`, `/status`, tenant verbs | the agent |
-| Console (`CONSOLE_TOKEN`) | the judge service | console sign-in | the browser (it only ever sees the HMAC-derived cookie) |
+| Console (`CONSOLE_TOKEN`) | the judge service | console sign-in | the browser (it sends the token once to sign in and keeps only the HMAC-derived session value, as a cookie or in the tab's `sessionStorage`) |
 | Approval bot token (`HOSTED_<TENANT>_TG_BOT_TOKEN`) | daemon | Telegram, as the approval bot | the judge (it refuses to start with one in its environment; `provision --judge` refuses a judge bot file equal to it), the agent |
 | Judge bot token (`JUDGE_TG_BOT_TOKEN`) | judge | Telegram `sendMessage`, as the judge: a second bot the approver has `/start`ed | the daemon, the agent |
 | Webhook secret | daemon, Telegram | the daemon's `/telegram/webhook` | everyone else |
