@@ -147,15 +147,17 @@ test('cold wake probes health twice and allocates a session once',async()=>{
   assert.equal(saved.length,1);
 });
 
-function runHarness({ready=[true],runResponses=[{status:202,body:{ok:true}}],clockStep=0}={}) {
+function runHarness({ready=[true],runResponses=[{status:202,body:{ok:true}}],clockStep=0,stateFor=null,routes={}}={}) {
   const calls=[];const elements=new Map();let stateIndex=0,runIndex=0,tick=0;
-  const node=()=>({children:[],textContent:'',hidden:false,disabled:false,addEventListener(){},replaceChildren(){this.children=[];},appendChild(item){this.children.push(item);},append(...items){this.children.push(...items);},setAttribute(){}});
+  const node=()=>({children:[],textContent:'',hidden:false,disabled:false,listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},replaceChildren(){this.children=[];},appendChild(item){this.children.push(item);},append(...items){this.children.push(...items);},setAttribute(){}});
   const doc={querySelector(){return null;},getElementById(id){if(!elements.has(id))elements.set(id,node());return elements.get(id);},createElement(){return node();}};
   const fetcher=async(url,options)=>{
     const route=new URL(url).pathname;calls.push([route,options.method]);
     const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
     if(route==='/health')return json({status:'ok'});
     if(route==='/api/session')return json({session_token:'a'.repeat(43)},202);
+    if(routes[route])return json(routes[route]());
+    if(route==='/api/state'&&stateFor){const state=stateFor(stateIndex++);if(state.throw)throw Error('network down');return json(state);}
     if(route==='/api/state'){const isReady=ready[Math.min(stateIndex++,ready.length-1)];return json({session:{state:'ready'},health:{ok:isReady,parts:{judge:true}},run:null,record:{}});}
     if(route==='/api/run'){const result=runResponses[Math.min(runIndex++,runResponses.length-1)];if(result.throw)throw Error('connection dropped after submit');return json(result.body,result.status);}
     if(route==='/approver/api/chat')return json({messages:[]});
@@ -209,4 +211,46 @@ test('network loss after run submit never triggers another POST',async()=>{
   assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
   assert.equal(h.elements.get('retry-run').hidden,true);
   assert.match(h.elements.get('notice').textContent,/could not be confirmed/);
+});
+
+const RUNNING={state:'running',scenarios:[],lines:[]};
+const readyState=run=>({session:{state:'ready'},health:{ok:true,parts:{judge:true}},run,record:{}});
+test('a transient state failure notice clears once a later poll confirms the run',async()=>{
+  const h=runHarness({stateFor:i=>i===0?{throw:true}:readyState(RUNNING)});
+  h.ctx.__pageTest.setTokenForTest('a'.repeat(43));
+  await h.ctx.__pageTest.poll();
+  assert.equal(h.elements.get('notice').textContent,'The demo connection failed. Retry in a moment.');
+  assert.equal(h.elements.get('notice').className,'bad');
+  await h.ctx.__pageTest.poll();
+  assert.equal(h.elements.get('notice').textContent,'Agent running. Watch the chat and decide each held action.');
+  assert.equal(h.elements.get('notice').className,'');
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,0);
+});
+test('an unconfirmed run notice clears once a later poll shows the run',async()=>{
+  let confirmed=false;
+  const h=runHarness({runResponses:[{throw:true}],stateFor:()=>readyState(confirmed?RUNNING:null)});
+  await h.ctx.__pageTest.begin();
+  assert.match(h.elements.get('notice').textContent,/could not be confirmed/);
+  assert.equal(h.elements.get('notice').className,'bad');
+  confirmed=true;
+  await h.ctx.__pageTest.poll();
+  assert.equal(h.elements.get('notice').textContent,'Agent running. Watch the chat and decide each held action.');
+  assert.equal(h.elements.get('notice').className,'');
+  assert.equal(h.calls.filter(([route])=>route==='/api/run').length,1);
+});
+test('a failed tap notice survives the next poll of a running run',async()=>{
+  const h=runHarness({stateFor:()=>readyState(RUNNING),routes:{
+    '/approver/api/chat':()=>({messages:[{bot:'gate',message_id:7,text:'<b>WHAT THIS DOES</b>\nMoves main',buttons:[{text:'Approve',data:'g:1:ab'}]}]}),
+    '/approver/api/tap':()=>{throw Error('network down');},
+  }});
+  h.ctx.__pageTest.setTokenForTest('a'.repeat(43));
+  await h.ctx.__pageTest.poll();
+  const find=n=>n.listeners&&n.listeners.click&&n.textContent==='Approve'?n:(n.children||[]).map(find).find(Boolean);
+  const approve=find(h.elements.get('chat'));
+  assert.ok(approve,'approve button rendered');
+  await approve.listeners.click();
+  assert.equal(h.elements.get('notice').textContent,'The demo connection failed. Retry in a moment.');
+  await h.ctx.__pageTest.poll();
+  assert.equal(h.elements.get('notice').textContent,'The demo connection failed. Retry in a moment.');
+  assert.equal(h.elements.get('notice').className,'bad');
 });
