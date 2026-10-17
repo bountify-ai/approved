@@ -45,6 +45,9 @@ services:
   daemon:
     <<: *daemon-image
     env_file: .state/daemon.env
+    # DEMO_HOOK_WAIT_S is the facade's hook wait, in seconds, and the only place it is set:
+    # the agent below derives its post timeout from the same value (HOSTED-30). Loopback
+    # only; a public proxy layout keeps 12 s (images/daemon/README.md).
     environment:
       PORT: "8080"
       APPROVAL_TENANT: demo
@@ -53,7 +56,7 @@ services:
       APPROVAL_HUMAN: human:demo
       HOSTED_DEMO_TG_CHAT: "4242"
       APPROVAL_SERVE_HOOK_HARNESS_CAP: 300s
-      APPROVAL_SERVE_HOOK_TIMEOUT: 10s
+      APPROVAL_SERVE_HOOK_TIMEOUT: ${DEMO_HOOK_WAIT_S:-15}s
       APPROVAL_PUBLIC_URL: https://daemon.approved-demo.invalid
       APPROVAL_IMAGE_TG_API_BASE: http://fake-telegram:8081
       APPROVAL_TICK_CRON: "off"
@@ -115,6 +118,7 @@ services:
     environment:
       FACADE_URL: http://daemon:8080
       AGENT_WAIT_S: ${AGENT_WAIT_S:-240}
+      AGENT_HOOK_WAIT_S: ${DEMO_HOOK_WAIT_S:-15}
       AGENT_SCENARIOS: ${AGENT_SCENARIOS:-}
     volumes:
       - ./agent:/agent:ro

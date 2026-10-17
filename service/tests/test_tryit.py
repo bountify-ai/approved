@@ -5,9 +5,11 @@ through ``App.handle`` and the fake Telegram is an in-memory fake."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -48,8 +50,12 @@ AGENT = ROOT / "demo" / "agent" / "agent.py"
 # ---------------------------------------------------------------- the image files
 
 
-def _compose_env(service: str) -> dict[str, str]:
-    """``environment:`` of one service in demo/compose.yaml (plain ``KEY: value`` lines)."""
+_COMPOSE_DEFAULT = re.compile(r"\$\{[A-Z_]+:-([^}]*)\}")
+
+
+def _compose_env(service: str, *, resolve: bool = True) -> dict[str, str]:
+    """``environment:`` of one service in demo/compose.yaml (plain ``KEY: value`` lines), with
+    compose's ``${NAME:-default}`` written as its default unless ``resolve`` is false."""
     lines = (ROOT / "demo" / "compose.yaml").read_text().splitlines()
     start = lines.index(f"  {service}:")
     env: dict[str, str] = {}
@@ -64,7 +70,8 @@ def _compose_env(service: str) -> dict[str, str]:
             match = re.match(r"^      ([A-Z_]+): (.*)$", line)
             if not match:
                 break
-            env[match.group(1)] = match.group(2).strip().strip('"')
+            value = match.group(2).strip().strip('"')
+            env[match.group(1)] = _COMPOSE_DEFAULT.sub(r"\1", value) if resolve else value
     return env
 
 
@@ -77,6 +84,120 @@ def test_tryit_children_get_the_compose_files_environment() -> None:
         expected = value.replace("http://fake-telegram:8081", "http://127.0.0.1:8081")
         assert daemon[key] == expected, key
     assert settings.fake_tg_env()["FORWARD_WEBHOOK_URL"] == "http://127.0.0.1:8080/telegram/webhook"
+
+
+def _load_agent() -> Any:
+    spec = importlib.util.spec_from_file_location("hosted30_demo_agent", AGENT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_one_value_sets_the_facade_hook_wait_and_the_agent_post_timeout() -> None:
+    """HOSTED-30 AC1: the daemon's hook wait and the agent's post timeout come from one value,
+    in compose (DEMO_HOOK_WAIT_S) and in the try-it image (TRYIT_HOOK_WAIT_S), and the post
+    always outlasts the wait so the facade answers first."""
+    agent = _load_agent()
+    daemon_raw = _compose_env("daemon", resolve=False)["APPROVAL_SERVE_HOOK_TIMEOUT"]
+    agent_raw = _compose_env("agent", resolve=False)["AGENT_HOOK_WAIT_S"]
+    default = tryit_config.HOOK_WAIT_DEFAULT_S
+    assert daemon_raw == f"${{DEMO_HOOK_WAIT_S:-{default}}}s"
+    assert agent_raw == f"${{DEMO_HOOK_WAIT_S:-{default}}}"
+    assert default == agent.DEFAULT_HOOK_WAIT_S
+    assert DAEMON_COMPOSE_ENV["APPROVAL_SERVE_HOOK_TIMEOUT"] == f"{default}s"
+
+    layout = Layout(Path("/data"))
+    for raw, wait in ((None, default), ("5", 5), ("12", 12), ("15", 15)):
+        env = {"PORT": "18789"} if raw is None else {"PORT": "18789", "TRYIT_HOOK_WAIT_S": raw}
+        settings = load_settings(env)
+        assert settings.hook_wait_s == wait
+        assert settings.daemon_env({})["APPROVAL_SERVE_HOOK_TIMEOUT"] == f"{wait}s"
+        child = settings.agent_env(layout, run_id="t1", scenario="push-main")
+        assert child["AGENT_HOOK_WAIT_S"] == str(wait)
+        post = agent.post_timeout_s(child)
+        assert post == wait + agent.POST_HEADROOM_S
+        assert post > wait
+        assert wait < settings.window_s  # one post never claims to outlast the window here
+    # An unset value in the agent is the shipped default, never the old fixed 25 s.
+    assert agent.post_timeout_s({}) == default + agent.POST_HEADROOM_S
+
+
+def test_hook_wait_stays_under_the_judges_follow_timeout(tmp_path: Path) -> None:
+    """On the pinned core `approval serve` answers one call at a time: the judge's follow
+    queues behind a hook call, so every allowed hook wait leaves it room (RESILIENCE.md)."""
+    from approved.config import Settings as JudgeSettings
+
+    follow_s = JudgeSettings.model_fields["http_timeout_s"].default
+    assert follow_s >= tryit_config.HOOK_WAIT_MAX_S + 5
+    for name, value in (("TRYIT_HOOK_WAIT_S", "4"), ("TRYIT_HOOK_WAIT_S", "16")):
+        with pytest.raises(TryitConfigError, match=name):
+            load_settings({"PORT": "18789", name: value})
+    with pytest.raises(TryitConfigError, match="TRYIT_HOOK_WAIT_S") as refused:
+        load_settings({"PORT": "18789", "TRYIT_HOOK_WAIT_S": "12s"})
+    assert "12s" not in str(refused.value)
+    # demo/run.sh holds DEMO_HOOK_WAIT_S to the same bounds before compose reads it.
+    lo, hi = tryit_config.HOOK_WAIT_MIN_S, tryit_config.HOOK_WAIT_MAX_S
+    run_sh = ROOT / "demo" / "run.sh"
+    assert f"DEMO_HOOK_WAIT_S must be a whole number from {lo} to {hi}" in run_sh.read_text()
+    # A PATH holding only `dirname`: no docker can be reached even if the guard were gone.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dirname = shutil.which("dirname")
+    assert dirname is not None
+    (bin_dir / "dirname").symlink_to(dirname)
+    for bad in ("4", "16", "08", "abc", "15s"):
+        done = subprocess.run(  # noqa: S603 - fixed argv; exits before any docker call
+            ["/bin/bash", str(run_sh), "agent"],
+            env={"PATH": str(bin_dir), "DEMO_HOOK_WAIT_S": bad},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 2, bad
+        assert "DEMO_HOOK_WAIT_S" in done.stderr
+
+
+def test_agent_posts_with_the_derived_timeout_and_refuses_a_bad_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _load_agent()
+    seen: list[float] = []
+
+    class _Answer:
+        status = 200
+
+        def __enter__(self) -> _Answer:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"exit_code": 0, "stdout": "", "stderr": ""}).encode()
+
+    def fake_urlopen(request: object, timeout: float) -> _Answer:
+        seen.append(timeout)
+        return _Answer()
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_urlopen)
+    timeout = agent.post_timeout_s({"AGENT_HOOK_WAIT_S": "12"})
+    outcome = agent.run_scenario("http://127.0.0.1:9", "t" * 32, "r1", "read", "cat x", timeout)
+    assert outcome == "ALLOWED"
+    assert seen == [12 + agent.POST_HEADROOM_S]
+
+    done = subprocess.run(  # noqa: S603 - the repo's own script, fixed argv
+        [sys.executable, str(AGENT)],
+        env={"FACADE_URL": "http://127.0.0.1:9", "AGENT_HOOK_WAIT_S": "999x"},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert done.returncode == 2
+    assert "AGENT_HOOK_WAIT_S" in done.stderr
+    assert "999x" not in done.stderr
 
 
 def _stage(text: str, header: str) -> list[str]:

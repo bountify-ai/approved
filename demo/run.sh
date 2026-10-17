@@ -15,6 +15,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 compose=(docker compose --project-directory "$here" -f "$here/compose.yaml" -p approved-demo)
 tg_port="${DEMO_TG_PORT:-8090}"
 
+# The facade's hook wait, which compose.yaml hands to both the daemon and the agent
+# (HOSTED-30). Bounded as TRYIT_HOOK_WAIT_S is: on the pinned core `approval serve` answers
+# one call at a time, and the judge's 20 s follow must outlast a hook call it queues behind.
+if [ -n "${DEMO_HOOK_WAIT_S:-}" ] && ! [[ "$DEMO_HOOK_WAIT_S" =~ ^([5-9]|1[0-5])$ ]]; then
+  echo "DEMO_HOOK_WAIT_S must be a whole number from 5 to 15" >&2
+  exit 2
+fi
+
 case "${1:-up}" in
   up)
     bash "$here/setup.sh"
