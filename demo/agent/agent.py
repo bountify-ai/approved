@@ -7,6 +7,10 @@ Behaves the way approval-md-hosted ``hermes-image/hermes-hook-shim.sh`` does: PO
 adopts it) wait and post again, up to ``AGENT_WAIT_S``. Anything that is not a clean answer
 is treated as a block (fail closed).
 
+One post waits ``AGENT_HOOK_WAIT_S`` (the facade's hook wait, the same value that sets the
+daemon's ``APPROVAL_SERVE_HOOK_TIMEOUT``) plus ``POST_HEADROOM_S`` before the client gives up,
+so the facade always answers first (HOSTED-30).
+
 Standard library only. The agent credential comes from ``AGENT_TOKEN_FILE`` or
 ``AGENT_TOKEN``; it is never printed.
 """
@@ -20,6 +24,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 SCENARIOS: list[tuple[str, str, str]] = [
@@ -42,6 +47,27 @@ SCENARIOS: list[tuple[str, str, str]] = [
 ]
 
 WITHDRAWN = re.compile(r"WAS WITHDRAWN")
+
+#: The facade's hook wait when ``AGENT_HOOK_WAIT_S`` is unset: the shipped default of
+#: ``DEMO_HOOK_WAIT_S`` (demo/compose.yaml) and ``TRYIT_HOOK_WAIT_S`` (the try-it image).
+DEFAULT_HOOK_WAIT_S = 15
+#: How much longer than the facade's hook wait one post may take: the facade's own hook
+#: start-up and the loopback round trip. 15 s, as the fixed 25 s post had over the old 10 s.
+POST_HEADROOM_S = 15
+#: The longest hook wait the client accepts: the longest harness cap the try-it allows.
+MAX_HOOK_WAIT_S = 300
+
+
+def post_timeout_s(environ: Mapping[str, str]) -> float:
+    """One post's client timeout: the facade's hook wait plus ``POST_HEADROOM_S``.
+
+    Raises ValueError naming the variable (never its value) when it is malformed."""
+    raw = (environ.get("AGENT_HOOK_WAIT_S") or "").strip()
+    if not raw:
+        return float(DEFAULT_HOOK_WAIT_S + POST_HEADROOM_S)
+    if not re.fullmatch(r"[0-9]{1,3}", raw) or not 1 <= int(raw) <= MAX_HOOK_WAIT_S:
+        raise ValueError(f"AGENT_HOOK_WAIT_S must be a whole number from 1 to {MAX_HOOK_WAIT_S}")
+    return float(int(raw) + POST_HEADROOM_S)
 
 
 def _token() -> str:
@@ -103,7 +129,14 @@ def _verdict(body: dict | None) -> tuple[str, str]:
     return "block", message
 
 
-def run_scenario(base: str, token: str, run_id: str, name: str, command: str) -> str:
+def run_scenario(
+    base: str,
+    token: str,
+    run_id: str,
+    name: str,
+    command: str,
+    post_timeout: float = float(DEFAULT_HOOK_WAIT_S + POST_HEADROOM_S),
+) -> str:
     store = os.environ.get("AGENT_STORE_DIR", "/data/demo")
     envelope = {
         "hook_event_name": "pre_tool_call",
@@ -117,7 +150,7 @@ def run_scenario(base: str, token: str, run_id: str, name: str, command: str) ->
     attempt = 0
     while True:
         attempt += 1
-        status, body = _post(f"{base}/hook/hermes", token, envelope, timeout_s=25)
+        status, body = _post(f"{base}/hook/hermes", token, envelope, timeout_s=post_timeout)
         if status != 200:
             return f"BLOCKED (facade HTTP {status})"
         kind, message = _verdict(body)
@@ -148,6 +181,11 @@ def main() -> int:
     if not base.startswith(("http://", "https://")):
         print("FACADE_URL must be an http(s) URL", file=sys.stderr)
         return 2
+    try:
+        post_timeout = post_timeout_s(os.environ)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     token = _token()
     run_id = os.environ.get("AGENT_RUN_ID") or str(int(time.time()))
     only = set(filter(None, os.environ.get("AGENT_SCENARIOS", "").split(",")))
@@ -155,7 +193,7 @@ def main() -> int:
         if only and name not in only:
             continue
         print(f"-> {name}: `{command}`  ({why})", flush=True)
-        outcome = run_scenario(base, token, run_id, name, command)
+        outcome = run_scenario(base, token, run_id, name, command, post_timeout)
         print(f"   OUTCOME {name}: {outcome}", flush=True)
     return 0
 

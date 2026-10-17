@@ -41,7 +41,7 @@ to a delay, a retry in the approver's path, or a placeholder.
 ### The judge reads between hook calls
 
 `approval serve` answers one call at a time, and a hook call holds it for the facade's hook
-wait (12 s recommended). The judge's follow queues behind it and is answered when that wait
+wait (12 s recommended behind a public proxy, 15 s in the loopback demo and try-it image). The judge's follow queues behind it and is answered when that wait
 ends, so the judge sees a request at the latest one hook wait after it opened. A human who
 decides inside that first wait decides before the judge has read the request; the judge then
 records `absent:already-decided` (visible in the console, never assent) instead of posting a

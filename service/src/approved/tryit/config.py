@@ -64,7 +64,18 @@ TENANT = "demo"
 
 # ---------------------------------------------------------------- the compose file's env
 
-#: ``demo/compose.yaml``, service ``daemon``, ``environment:``, verbatim.
+#: The facade's hook wait (``APPROVAL_SERVE_HOOK_TIMEOUT``), in seconds, by default and at
+#: most: ``TRYIT_HOOK_WAIT_S`` here, ``DEMO_HOOK_WAIT_S`` in demo/compose.yaml. One value sets
+#: the daemon's wait and the agent's post timeout (HOSTED-30). The ceiling is the pinned core's:
+#: ``approval serve`` answers one call at a time there, so the judge's follow (20 s,
+#: ``HTTP_TIMEOUT_S``) queues behind a hook call and must outlast it. A core with the bounded
+#: hook pool (approval.md 0.4.0, APRV-427) lifts that ceiling to the approval window.
+HOOK_WAIT_DEFAULT_S = 15
+HOOK_WAIT_MIN_S = 5
+HOOK_WAIT_MAX_S = 15
+
+#: ``demo/compose.yaml``, service ``daemon``, ``environment:``, verbatim, with compose's
+#: ``${NAME:-default}`` written as its default.
 DAEMON_COMPOSE_ENV: dict[str, str] = {
     "PORT": "8080",
     "APPROVAL_TENANT": "demo",
@@ -73,7 +84,7 @@ DAEMON_COMPOSE_ENV: dict[str, str] = {
     "APPROVAL_HUMAN": "human:demo",
     "HOSTED_DEMO_TG_CHAT": "4242",
     "APPROVAL_SERVE_HOOK_HARNESS_CAP": "300s",
-    "APPROVAL_SERVE_HOOK_TIMEOUT": "10s",
+    "APPROVAL_SERVE_HOOK_TIMEOUT": f"{HOOK_WAIT_DEFAULT_S}s",
     "APPROVAL_PUBLIC_URL": "https://daemon.approved-demo.invalid",
     "APPROVAL_IMAGE_TG_API_BASE": "http://fake-telegram:8081",
     "APPROVAL_TICK_CRON": "off",
@@ -163,6 +174,9 @@ class Settings:
     #: The harness cap the daemon's facade is told (``--hook-harness-cap``). The approval
     #: window is this minus the runtime's 60-second margin: 300 s (the demo's) gives 240 s.
     harness_cap_s: int = 300
+    #: The facade's hook wait (``--hook-timeout``) and, plus the agent's own headroom, its
+    #: post timeout: one value for both (HOSTED-30).
+    hook_wait_s: int = HOOK_WAIT_DEFAULT_S
     run_min_interval_s: float = 20.0
     runs_per_hour: int = 60
     #: TRYIT_LIVE=1 was asked for. ``live_ready`` says whether it can be honoured.
@@ -202,6 +216,7 @@ class Settings:
         env["APPROVAL_SERVE_INTERNAL_PORT"] = str(self.serve_port)
         env["APPROVAL_WEBHOOK_INTERNAL_PORT"] = str(self.webhook_port)
         env["APPROVAL_SERVE_HOOK_HARNESS_CAP"] = f"{self.harness_cap_s}s"
+        env["APPROVAL_SERVE_HOOK_TIMEOUT"] = f"{self.hook_wait_s}s"
         env.update(_DAEMON_IMAGE_ENV)
         if layout is not None:
             env["APPROVAL_DATA_DIR"] = str(layout.data)
@@ -255,6 +270,7 @@ class Settings:
             "FACADE_URL": f"http://127.0.0.1:{self.daemon_port}",
             "AGENT_TOKEN_FILE": str(layout.secrets / "agent_token"),
             "AGENT_WAIT_S": str(self.agent_wait_s),
+            "AGENT_HOOK_WAIT_S": str(self.hook_wait_s),
             "AGENT_SCENARIOS": scenario,
             "AGENT_RUN_ID": run_id,
             "AGENT_STORE_DIR": str(layout.store),
@@ -330,6 +346,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     return Settings(
         port=port,
         harness_cap_s=_int(environ, "TRYIT_HOOK_HARNESS_CAP_S", 300, 90, 300),
+        hook_wait_s=_int(
+            environ, "TRYIT_HOOK_WAIT_S", HOOK_WAIT_DEFAULT_S, HOOK_WAIT_MIN_S, HOOK_WAIT_MAX_S
+        ),
         run_min_interval_s=float(min_interval),
         runs_per_hour=_int(environ, "TRYIT_RUNS_PER_HOUR", 60, 1, 10_000),
         live_requested=live_requested,

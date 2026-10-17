@@ -67,3 +67,33 @@ For a local backend using a real reviewer, export `TRYIT_GATEWAY_SECRET` (at lea
 characters), `WANDB_API_KEY`, and `REVIEWER_MODEL`, then run `make tryit`. Send
 `X-Approved-Gateway` in every request except `/health`. `make tryit` does not start the
 dedicated gateway; `make demo` is the offline local comparison.
+
+## Hook wait and the re-post gap
+
+The scripted agent re-asks while the facade answers `hook-timeout`, as the Hermes shim does.
+Each post holds the facade for its hook wait. A human decision made while a hook call is waiting
+reaches that call. A rejection that lands between two posts reaches no one, and the next post of
+the same bytes opens a new question, so the approver can be asked again about an action they
+just refused (core behaviour, recorded upstream as core issue 2). Enforcement still holds:
+nothing runs without a grant.
+
+One value sets the wait: `TRYIT_HOOK_WAIT_S` for the try-it image, `DEMO_HOOK_WAIT_S` for
+`make demo`, default 15 s, a whole number from 5 to 15. It becomes the daemon's
+`APPROVAL_SERVE_HOOK_TIMEOUT` and the agent's `AGENT_HOOK_WAIT_S`. The agent gives each post that
+wait plus 15 s, so the facade always answers before the client gives up. Both layouts are
+loopback, so no proxy cut applies (see the daemon image's
+[hook-wait guidance](../images/daemon/README.md#environment)).
+
+The residual gap, from the code and not yet measured: one gap per re-post, each about the
+agent's 0.2 s pause plus the next post's round trip and hook start-up. With the default 240 s
+approval window that is at most 16 gaps per held request at 15 s, against 24 at the old 10 s.
+Measuring a gap's length needs `make demo` (Docker) and is still owed (HOSTED-30 AC2).
+
+The gap closes only when one post outlasts the approval window. The pinned core cannot do that
+here. `approval serve` answers one call at a time, and the judge's follow (20 s,
+`HTTP_TIMEOUT_S`) queues behind a hook call. With a hook wait as long as the window, the judge
+would read the request only after it had expired, so no advisory would come before the
+decision. That is why the setting stops at 15 s. Core 0.4.0 runs hook calls on a bounded pool of
+threads (APRV-427). Once the daemon image pins it, the ceiling can rise to the approval window.
+Core accepts any `--hook-timeout` and clamps the wait to the harness cap minus 60 s, which is the
+window unless the policy's `approval_ttl` is shorter.
